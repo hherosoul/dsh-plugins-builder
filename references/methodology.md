@@ -19,12 +19,12 @@ DeepSeek Harness（dsh）插件（bundle）**——可安装、可运行、行�
 
 | 工具 | 后端脚本 | 用途 | 状态 |
 |------|----------|------|------|
-| `plugin_init` | `init_plugin.py` | 初始化插件目录（`kind=minimal\|tool\|config\|service\|event-hook\|seam-trio`） | M1 |
-| `plugin_validate` | `validate_plugin.py` | 静态合规校验（规则 ID；`--policy` 自定义验收、`--skip-path-check` 就地校验、`--trust-append` 放行第三方 append） | M1 |
-| `plugin_verify` | `verify_plugin.py` | 运行时验证矩阵编排（L2–L5），产出证据 JSON | M2 未就绪 |
-| `plugin_package` | `package_plugin.py` | 校验 → 构建 → 打包 → 打包后验收（[E] 干净度 + [F] 安装式） | M2 未就绪 |
-| `plugin_qa_report` | `qa_report.py` | 聚合机读用例结果 + 运行时证据 → QA-REPORT.md（判定归 LLM，脚本只聚合） | M3 未就绪 |
-| `plugin_ledger` | `ledger.py` | 交付台账：bootstrap / add / latest / align / advise | M2 未就绪 |
+| `plugin_init` | `init_plugin.js` | 初始化插件目录（`kind=minimal\|tool\|config\|service\|event-hook\|seam-trio`） | M1 |
+| `plugin_validate` | `validate_plugin.js` | 静态合规校验（规则 ID；`--policy` 自定义验收、`--skip-path-check` 就地校验、`--trust-append` 放行第三方 append） | M1 |
+| `plugin_verify` | `verify_plugin.js` | 运行时验证矩阵编排（L2–L5），产出证据 JSON | M2 未就绪 |
+| `plugin_package` | `package_plugin.js` | 校验 → 构建 → 打包 → 打包后验收（[E] 干净度 + [F] 安装式） | M2 未就绪 |
+| `plugin_qa_report` | `qa_report.js` | 聚合机读用例结果 + 运行时证据 → QA-REPORT.md（判定归 LLM，脚本只聚合） | M3 未就绪 |
+| `plugin_ledger` | `ledger.js` | 交付台账：bootstrap / add / latest / align / advise | M2 未就绪 |
 | `plugin_guide` | （直接读 `references/`） | 按主题返回方法论细则 | M1 |
 
 未就绪脚本输出结构化 `{"status":"unavailable",...}` 并以退出码 2 结束——**如实告知
@@ -34,7 +34,7 @@ DeepSeek Harness（dsh）插件（bundle）**——可安装、可运行、行�
 硬编码绝对路径）；CLI 回退一律写 `<dsh-plugins-builder 安装目录>` 占位风格：
 
 ```
-python3 <dsh-plugins-builder 安装目录>/scripts/init_plugin.py ...
+node <dsh-plugins-builder 安装目录>/scripts/init_plugin.js ...
 ```
 
 ## 五阶段 SOP
@@ -62,7 +62,7 @@ presenters / 后台任务）、patch 行设计（行 id、insert 还是覆盖、
 ```
 plugin_init(name=<name>, kind=tool, path=<工作目录>)
 # CLI 回退：
-python3 <dsh-plugins-builder 安装目录>/scripts/init_plugin.py <name> --kind minimal|tool|config|service|event-hook|seam-trio --path <工作目录>
+node <dsh-plugins-builder 安装目录>/scripts/init_plugin.js <name> --kind minimal|tool|config|service|event-hook|seam-trio --path <工作目录>
 ```
 填充 `index.js`（或 TS 源）、`package.json`、`cordis.patch.yml`、`dev/cordis.yml`、
 README Quickstart。
@@ -80,7 +80,7 @@ plugin_verify(target=<插件目录>)            # 运行时 · 分层实证（M2
 文档 → 最小改动 → 复测，≤3 轮）+ 回归。详见 `qa-playbook.md`（含证据 JSON 格式与
 「未覆盖项」规范）。每轮结果落成机读证据；**任何改动后重放全量用例并 diff 上一轮**。
 **自定义验收标准**：`--policy <yaml>` 可覆盖 / 豁免方法论阈值（B 类，豁免须带 reason
-且报告可见）；平台契约（A 类）拒绝覆盖。格式：`validate_plugin.py --policy-help`。
+且报告可见）；平台契约（A 类）拒绝覆盖。格式：`validate_plugin.js --policy-help`。
 **门禁**：校验 0 error + 运行时矩阵（环境允许的全部层）通过 + 9 维度通过；未过回退
 Phase 2/3。
 
@@ -89,7 +89,7 @@ Phase 2/3。
 plugin_package(target=<插件目录>)           # M2
 plugin_ledger(action=add, target=<插件目录>, note="<改了什么>")
 ```
-`package_plugin.py`（M2）在打完包后**自动执行打包后验收**：
+`package_plugin.js`（M2）在打完包后**自动执行打包后验收**：
 - **[E] 包干净度（五层）**：清单完整 → 无杂质 → `package.json` 完备（`dsh.bundle` /
   `files` / `type` / version / license）→ 清单与 `files` 一致 → 构建产物与源码版本一致。
 - **[F] 安装式可发布性**：净目录临时 profile → `dsh plugin add <包>` →
@@ -121,27 +121,32 @@ plugin_ledger(action=add, target=<插件包路径>, note="<改了什么>")
 | 0 | 通过 |
 | 1 | 有 error / 验收不通过 |
 | 2 | 用法错误 / 里程碑未就绪（unavailable） |
-| 3 | 环境缺失降级（诚实声明未覆盖项） |
 
 ## 铁律（决策前必读）
 
 **平台铁律**（A 类，来自 dsh 契约，全文见 `dsh-spec.md`）：规范值铁律（`execute` 只返回
 `output.schema` 声明的规范 JSON 值；内容块只出自 `render`；抛异常或非法返回 = `isError`）、
-瀑布铁律（waterfall 监听器必须调用 `next()`）、纯函数铁律（presenters 无 I/O / 时钟 /
-随机）、模型可见即已记录、信号铁律（遵守 `exec.signal`）、副作用铁律（手动资源必须进
-`ctx.effect()`）、配置铁律（无硬编码可调参数；配置错误要响亮；不导出普通对象作 Config）、
-层序铁律（patch 按行整体替换；bundle 层按包名引用；绝对路径只许出现在开发覆盖层）、
-拆分铁律（不预防性拆分）、策略铁律（部署策略走钩子，不内建进工具）。
+瀑布铁律（waterfall 监听器必须调用 `next()`）、纯函数铁律（render 与 presenters 无 I/O /
+时钟 / 随机）、渲染意图铁律（`presentCall` / `presentResult` 返回 card 标签的封闭联合
+——generic / terminal / diff；UI 格式不为 UI 进入规范值；回放绝不崩溃）、模型可见即已记录、
+信号铁律（遵守 `exec.signal`；后台任务发布 id 后改用任务自有取消信号）、副作用铁律
+（手动资源必须进 `ctx.effect()`）、配置铁律（无硬编码可调参数；配置错误要响亮；不导出
+普通对象作 Config）、层序铁律（patch 按行整体替换；bundle 层按包名引用；绝对路径只许
+出现在开发覆盖层）、manifest 铁律（`dsh.bundle` 与 `dsh.profile` 互斥，没有东西同时是
+两者；应用参数不是 patch 层）、拆分铁律（不预防性拆分）、策略铁律（部署策略走
+`tools/pre-execute` / `ctx.tools.guard()` 等钩子，不内建进工具）、PTC 铁律（PTC mode 经
+`await tools.<name>(args)` 取得的是规范 JSON 值而非渲染文本，`output.schema` 必须设计成
+实用的程序化 API）。
 
 **工程铁律**（本工具自身纪律）：
-- **SSOT**：任何规范只定义一次，其余位置只放指针；文档预算以 `validate_plugin.py` 的
+- **SSOT**：任何规范只定义一次，其余位置只放指针；文档预算以 `validate_plugin.js` 的
   `DOC_BUDGET` 常量为唯一事实来源，文档中不写具体数字。
 - **脚本化边界**：只脚本化「计算 / 变换」；「识别 / 匹配」（意图、实体、语义）留给
   LLM。判定问句与灰区裁决表见 `design-spec.md`。
 - **路径纪律**：脚本一律由插件工具运行时解析调用；CLI 回退只写
   `<dsh-plugins-builder 安装目录>` 占位风格；杜绝相对路径与硬编码绝对路径。
 - **凭据铁律**：包内严禁真实 Token / 密钥；一律配置字段或 `${VAR}` 占位。
-- **记账铁律**：交付前必须 `ledger.py add`；退出码非 0 不得宣称交付完成。
+- **记账铁律**：交付前必须 `ledger.js add`；退出码非 0 不得宣称交付完成。
 - **发布卫生**：示例一律占位符；包内无个人绝对路径与账号标识；二进制剥元数据。
 - **诚实降级**：环境做不到的验证显式声明「未覆盖」，禁止静默通过、禁止谎报。
 - **Dogfooding**：里程碑收工用自身流水线校验自身；自身包过不了自己的校验 = 阻断发布。
@@ -149,6 +154,6 @@ plugin_ledger(action=add, target=<插件包路径>, note="<改了什么>")
 ## 契约漂移防线
 
 dsh 处于技术预览期。开工前查 `dsh-spec.md` 版本戳；距上次巡检过久
-（`ledger.py advise` 会报告天数，M2）→ 按其附录页面清单逐页核对官方文档 → 发现漂移
-同步改三处且只改三处：`dsh-spec.md`（契约）+ `validate_plugin.py`（规则）+ 受影响模板，
+（`ledger.js advise` 会报告天数，M2）→ 按其附录页面清单逐页核对官方文档 → 发现漂移
+同步改三处且只改三处：`dsh-spec.md`（契约）+ `validate_plugin.js`（规则）+ 受影响模板，
 一次改动一个原子提交，账本记录。

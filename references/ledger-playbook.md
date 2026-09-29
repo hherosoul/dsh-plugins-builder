@@ -1,7 +1,7 @@
 # 台账手册（ledger）
 
 > 台账回答一个问题：**这个插件上次交付是什么状态、改了什么、验收结论如何**。
-> `ledger.py` 为 M2 里程碑（当前诚实输出 unavailable，退出码 2）；M2 前用手工等效记录并如实说明。
+> `ledger.js` 为 M2 里程碑（当前诚实输出 unavailable，退出码 2）；M2 前用手工等效记录并如实说明。
 
 ## 存储：本地为主，云端为可选通道
 
@@ -27,11 +27,11 @@
 优先调用本插件的 `plugin_ledger` 工具；CLI 回退：
 
 ```
-python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py bootstrap          # 首次召唤：绑定（幂等）
-python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py add --pkg <插件目录> --note "<改了什么>"
-python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py latest             # 当前态视图：每插件一行
-python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py align              # 双向并集对齐（幂等）
-python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py advise             # 契约巡检天数 + 待办
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js bootstrap          # 首次召唤：绑定（幂等）
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js add --pkg <插件目录> --note "<改了什么>"
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js latest             # 当前态视图：每插件一行
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js align              # 双向并集对齐（幂等）
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js advise             # 契约巡检天数 + 待办
 ```
 
 ## 纪律
@@ -43,4 +43,4 @@ python3 <dsh-plugins-builder 安装目录>/scripts/ledger.py advise             
 
 ## M2 前的诚实替代
 
-脚本未就绪期间：在交付记录中手写上述七字段（随 QA-REPORT 或交付说明一并给出），并明确标注「台账脚本未就绪（M2），本条为手工记录」。**禁止假装已调用 ledger.py。**
+脚本未就绪期间：在交付记录中手写上述七字段（随 QA-REPORT 或交付说明一并给出），并明确标注「台账脚本未就绪（M2），本条为手工记录」。**禁止假装已调用 ledger.js。**

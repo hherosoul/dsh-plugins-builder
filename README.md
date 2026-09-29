@@ -41,19 +41,22 @@ dsh web --patch ./dev/cordis.yml        # with the dsh CLI installed
 
 | 工具 | 后端脚本 | 用途 | 状态 |
 |------|----------|------|------|
-| `plugin_init` | `scripts/init_plugin.py` | 脚手架：6 类模板生成 dsh bundle | M1 可用 |
-| `plugin_validate` | `scripts/validate_plugin.py` | 静态规则 ID 质检（支持 `--policy`） | M1 可用 |
+| `plugin_init` | `scripts/init_plugin.js` | 脚手架：6 类模板生成 dsh bundle | M1 可用 |
+| `plugin_validate` | `scripts/validate_plugin.js` | 静态规则 ID 质检（支持 `--policy`） | M1 可用 |
 | `plugin_guide` | （读取 `references/`） | 按主题返回方法论细则 | M1 可用 |
-| `plugin_verify` | `scripts/verify_plugin.py` | 运行时验证矩阵 L2–L5 | M2 未就绪 |
-| `plugin_package` | `scripts/package_plugin.py` | 打包 + 打包后验收（[E]+[F]） | M2 未就绪 |
-| `plugin_ledger` | `scripts/ledger.py` | 交付台账 | M2 未就绪 |
-| `plugin_qa_report` | `scripts/qa_report.py` | 聚合证据 → QA-REPORT.md | M3 未就绪 |
+| `plugin_verify` | `scripts/verify_plugin.js` | 运行时验证矩阵 L2–L5 | M2 未就绪 |
+| `plugin_package` | `scripts/package_plugin.js` | 打包 + 打包后验收（[E]+[F]） | M2 未就绪 |
+| `plugin_ledger` | `scripts/ledger.js` | 交付台账 | M2 未就绪 |
+| `plugin_qa_report` | `scripts/qa_report.js` | 聚合证据 → QA-REPORT.md | M3 未就绪 |
+
+六个脚本类工具按官方渲染意图契约声明 **terminal 卡片**（`presentCall` / `presentResult`
+返回 card 标签联合，`presentationMeta` 持久化退出码供回放），均为 args(+result) 的纯函数；
+`plugin_guide` 走通用卡片回退。
 
 ## Configuration
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `pythonBin` | `python3` | 脚本解释器（脚本仅依赖 Python 标准库） |
 | `workspaceRoot` | `''`（空 = 宿主进程 cwd） | 相对路径参数的锚点目录 |
 
 ## 里程碑诚实声明
@@ -65,5 +68,5 @@ dsh web --patch ./dev/cordis.yml        # with the dsh CLI installed
 
 ## Environment requirements
 
-- Python 3（脚本零第三方依赖）；`dsh` CLI（安装与启动）。
+- Node ≥18（脚本为零构建 ESM，零第三方依赖）；`dsh` CLI（安装与启动）。
 - 启动本插件无需 API key；对生成插件做模型级行为验证时需要已配置的模型。

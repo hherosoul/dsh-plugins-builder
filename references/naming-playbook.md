@@ -1,6 +1,6 @@
 # 命名库（包名 / 行 id / 服务名 / 事件名）
 
-> 命名单一事实来源。`init_plugin.py` 按本表自动派生；手工修改后须重跑校验。
+> 命名单一事实来源。`init_plugin.js` 按本表自动派生；手工修改后须重跑校验。
 
 ## 包名（package.json `name`）
 
@@ -40,7 +40,7 @@
 - 开发 profile：`demo` / `dev-<plugin>`。
 - 安装式验收临时 profile：`__verify_<name>`（双下划线前缀 = 机器所有，验证后强制清理）。
 
-## 派生规则（init_plugin.py 实现）
+## 派生规则（init_plugin.js 实现）
 
 | 输入 | 派生 |
 |---|---|

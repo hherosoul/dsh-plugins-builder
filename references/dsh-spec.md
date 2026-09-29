@@ -2,10 +2,10 @@
 
 > **契约版本戳**（契约漂移防线；巡检后更新此处，规则与模板同步）
 > - 官方文档根：`https://deepseek-harness.github.io/deepseek-harness/`
-> - contract_version：**2026-09-29**（契约快照 = 官方文档巡检日期）
-> - last_inspected：**2026-09-29**
+> - contract_version：**2026-09-30**（契约快照 = 官方文档巡检日期）
+> - last_inspected：**2026-09-30**
 > - 巡检页面清单：见文末附录（11 页）
-> - 漂移处置：同步改三处且只改三处——本文档（契约）+ `validate_plugin.py`（规则）+ 受影响模板
+> - 漂移处置：同步改三处且只改三处——本文档（契约）+ `validate_plugin.js`（规则）+ 受影响模板
 
 dsh 的扩展体系建立在 Cordis 之上：**产品的每一部分都是插件**（模型适配器、工具注册表、会话日志、agent loop 本身），没有特权内核。
 
@@ -83,11 +83,15 @@ ctx.tools.register(defineTool({
 ```
 
 硬契约：
-- **规范值铁律**：`execute` 只返回 `output.schema` 声明的**规范 JSON 值**；内容块只出自 `render`；抛异常或非法返回 = `isError`。
+- **规范值铁律**：`execute` 只返回 `output.schema` 声明的**规范 JSON 值**；内容块只出自 `render`；抛异常或非法返回 = `isError`。注册表把返回值快照为无损 JSON、校验并冻结后才传给 `render(args, value)`。成功的领域结果即使表示不理想状态（如进程非零退出）也写入规范值，由渲染器解释。
+- **执行身份**：`arguments` 在策略开始前物化为冻结的无损 JSON；`callId` / `name` / `arguments` / `agent` / `exec.token` / `exec.signal` 全程不可变；`args` 是只读输入。异步通知用 `exec.agent.inject(...)`（须 try/catch 防已 dispose 的 agent）。
 - **纯函数铁律**：`render` 与 UI 卡片 `presentCall` / `presentResult` / `presentationMeta` 是 args(+result) 的**纯函数**——无 I/O、无时钟、无随机（回放场景不得崩溃）。
-- **信号铁律**：遵守 `exec.signal`；长任务在关键点检查 `aborted`；后台任务用 `ctx.jobs.start({ kind, label, owner: exec.agent, run })`，发布任务 id 后改用任务自有取消信号。
-- **参数形状**：显式对象节点必须声明 `additionalProperties: true|false`。
-- **策略铁律**：部署策略走 `tools/pre-execute` 等钩子，**不内建进工具**。
+- **渲染意图**：`presentCall(args)` / `presentResult(args, { content, isError, meta? })` 返回 **card 标签的可辨识联合**——调用侧 `generic`（title/kind/rawInput/content/locations）/ `terminal`（title/description?/cwd?）/ `diff`（diffs: [{path, oldText, newText}]）；结果侧 `generic` / `terminal`（output?/exitCode?/signal?）。联合是封闭的；无展示方法回退通用卡片；畸形输入软校验回退（回放绝不崩溃）。UI 格式（```console 围栏、diff、相对化路径）不为 UI 进入规范值或 Native 内容；终端回退格式归 bridge。
+- **presentationMeta**：`output.presentationMeta(args, value)` 从规范值派生可回放 JSON，核心持久化在 `tool/result` 并传给 `presentResult`——结果期卡片事实（如已应用 hunk、退出码）靠它在回放重现，无需持久化规范值。
+- **信号铁律**：遵守 `exec.signal`；长任务在关键点检查 `aborted`；后台任务由 producer 配置控制 `run_in_background`，用 `ctx.jobs.start({ kind, label, owner: exec.agent, run })` 注册，成功分支返回规范句柄（如 `{ kind: 'background', jobId }`）；发布任务 id 后改用**任务自有取消信号**（外层信号只停止等待）。
+- **参数形状**：显式对象节点必须声明 `additionalProperties: true|false`；隐式参数根对象保持开放。注册借用只读定义——注册后不得修改 schema 或替换回调。
+- **策略铁律**：部署策略走钩子，**不内建进工具**——`tools/pre-execute`（允许/拒绝/询问）、`ctx.tools.guard()`（最终单调拒绝）、`tools/execute`（截止时间/重试/指标）、`tools/post-execute`（替换/阻止/附加上下文）、`tools/result`（观测不可变结果）。
+- **PTC mode**：每个已注册工具自动经 `await tools.<name>(args)` 可达；成功解析为策略处理后的**规范 JSON 值**（非渲染文本），失败以 `ToolCallError` reject（只可查 name/toolName/message）。因此 `output.schema` 要设计成实用的程序化 API：直接返回句柄与字段；标量/数组/null 确是结果时允许相应根类型；人类解释归 `render`。
 
 ## 5. 配置（Config）
 
@@ -152,6 +156,12 @@ Service **Definition**（拥有服务名 + Request/Result 类型）/ **Provider*
 两种 manifest，都由 `package.json` 描述，`dsh` 键下携带：
 - **组合包（bundle）**：附带一个配置层的 npm 包，`dsh.bundle` 回答「这个包贡献什么」。
 - **profile**：`$DSH_HOME/profiles/<name>` 下、描述一份可启动组合的目录，`dsh.profile` 回答「由哪些组合包按什么顺序组成」。没有东西同时是两者。
+
+profile 目录含两个文件：`package.json`（树外插件依赖，交 pnpm 管理）+ `cordis.patch.yml`（用户自己的 patch 层，在所有组合包层之后应用）。profile manifest **从不需要手写**：`dsh --profile <name> --from-default-profile <template>` 从应用模板创建，`dsh plugin` 创建以 `@deepseek-ai/dsh-base` 为底的 profile 并维护 `dsh.profile.bundles` 有序列表。**应用参数不是另一层 patch**；表层组合包通过自有服务解析它们。内置组合包名称始终从 dsh 安装目录本身解析（pnpm 只管树外包），故组合包可放心依赖 `@deepseek-ai/dsh-base` 存在。
+
+### 表层组合包持有自己的命令行
+
+定义可运行应用的组合包挂载一个普通提供方插件（如 `name: '<pkg>/startup'`）：该插件导出 `inject = ['cmdlineArgs']`，用自己的 commander program 调用 `@deepseek-ai/dsh-cmdline` 的 `parseCmdline`，在 program 的 action 中把应用自有服务提供出去。启动器把自身 flag 之后的同一份**不可变参数**交给每个插件——添加应用专属 flag 无需改启动器。受这些参数配置的行注入提供方服务，在自己的 `!!js` 选项中读取它，并把部署取值写在旁边作回退（如 `port: !!js ctx.myAppStartup.port ?? 8080`）。遇到 `--help` 时提供方不发布服务，这些行不激活。
 
 ### 组合包形状（官方 hello 基线）
 

@@ -1,12 +1,12 @@
 # Phase 4 质检手册（运行时矩阵 + 9 维度 + 证据链）
 
-## 运行时验证矩阵（verify_plugin.py，M2）
+## 运行时验证矩阵（verify_plugin.js，M2）
 
 > 静态校验只能证明「写得像」，运行时验证才证明「跑起来是」。分层递进，每层产出结构化证据。
 
 | 层 | 验证内容 | 手段 | 环境要求 |
 |---|---|---|---|
-| L1 静态 | 规则 ID 全量 | `validate_plugin.py`（M1 可用） | 无 |
+| L1 静态 | 规则 ID 全量 | `validate_plugin.js`（M1 可用） | 无 |
 | L2 构建 | TS 编译 / 打包产物生成 | `tsc` / `tsdown` / `pnpm build` | node + pnpm |
 | L3 加载 | 覆盖层加载成功；`--dump-config` 出现目标层；无 FAILED fiber | `dsh ... --patch` + `--dump-config`，捕获启动日志 | dsh CLI |
 | L4 行为 | 工具可被调用且返回规范值；非法配置加载失败且报错响亮；HMR 重载无残留注册；取消（signal）生效 | headless 运行 / Web UI 实测；构造边界输入 | dsh CLI（调用类用例需模型密钥） |

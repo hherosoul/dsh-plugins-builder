@@ -23,7 +23,7 @@ that activates the provider row.
 1. Provider imports the service name from Definition and registers via class form.
 2. Consumer declares `inject = ['{{ROW_ID}}']` (required) or `ctx.get('{{ROW_ID}})?.` (optional).
 3. Bundle `cordis.patch.yml` inserts the provider row BY PACKAGE NAME.
-4. Validate each package directory separately with `validate_plugin.py`.
+4. Validate each package directory separately with `validate_plugin.js`.
 
 ## Iron rules
 

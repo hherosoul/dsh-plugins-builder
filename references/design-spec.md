@@ -56,7 +56,7 @@
 4. `output.schema` + `output.render`：规范值形状 + 纯函数渲染（两者成对）。
 5. `execute`：只返回规范值；遵守 `exec.signal`；长任务 → `ctx.jobs.start`；失败诚实（抛异常 = isError，禁止谎报成功）。
 
-决策问句：需要 UI 卡片？→ presenters（纯函数）。需要后台长跑？→ `ctx.jobs.start`。需要部署策略？→ 钩子，不进工具。
+决策问句：需要 UI 卡片？→ presenters（card 标签渲染意图：generic / terminal / diff；纯函数；结果期卡片事实经 `presentationMeta` 持久化）。需要后台长跑？→ `ctx.jobs.start`（producer 配置控制 `run_in_background`；发布 id 后改用任务自有取消信号）。需要部署策略？→ 钩子（`tools/pre-execute` / `ctx.tools.guard()` / `tools/post-execute`），不进工具。会被 PTC mode 程序化调用？→ `output.schema` 按程序化 API 设计（直接返回句柄与字段；人类解释归 `render`）。
 
 ## patch 行设计
 
@@ -70,7 +70,7 @@
 | 通道 | 适用 | 用户侧要求 | 本工具处理 |
 |---|---|---|---|
 | npm 发布（预构建） | 公开分发（默认推荐） | 无构建授权 | 构建产物进 `files`，发布前验收 |
-| tarball（`pnpm pack`） | 定向交付 / 离线 | 无构建授权 | `package_plugin.py`（M2）产出 tgz + 安装式验收 |
+| tarball（`pnpm pack`） | 定向交付 / 离线 | 无构建授权 | `package_plugin.js`（M2）产出 tgz + 安装式验收 |
 | git 安装 | 协作开发 | `prepare` 自包含 + `allowBuilds` 授权 + 锁 commit | 校验 prepare 自包含性；README 写授权步骤与安全警示 |
 
 ## 脚本化边界（三原则 + 判定问句）
@@ -114,7 +114,7 @@
 
 插件侧同理：契约只写 `cordis.patch.yml` + README Quickstart 一处事实；README 命令必须可逐条复制执行。
 
-预算以 `validate_plugin.py` 的 `DOC_BUDGET` 常量为唯一事实来源，文档中不写具体数字。冗余判定属识别类，不脚本化——归 Phase 4 维度 8。
+预算以 `validate_plugin.js` 的 `DOC_BUDGET` 常量为唯一事实来源，文档中不写具体数字。冗余判定属识别类，不脚本化——归 Phase 4 维度 8。
 
 验收问句：这条规则在几个文件里出现过？> 1 即失败。改一处阈值要改几个文件？> 1 即失败。
 

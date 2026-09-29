@@ -39,15 +39,15 @@ Prefer the `plugin_validate` tool provided by the dsh-plugins-builder plugin
 (if installed). CLI fallback, using the dsh-plugins-builder install directory:
 
 ```sh
-python3 <dsh-plugins-builder install dir>/scripts/validate_plugin.py {{PLUGIN_DIR}}
+node <dsh-plugins-builder install dir>/scripts/validate_plugin.js {{PLUGIN_DIR}}
 ```
 
 Runtime verification (L2–L5) and packaging with install-grade acceptance
 (`plugin_verify` / `plugin_package` tools; M2):
 
 ```sh
-python3 <dsh-plugins-builder install dir>/scripts/verify_plugin.py {{PLUGIN_DIR}}     # M2
-python3 <dsh-plugins-builder install dir>/scripts/package_plugin.py {{PLUGIN_DIR}}    # M2
+node <dsh-plugins-builder install dir>/scripts/verify_plugin.js {{PLUGIN_DIR}}     # M2
+node <dsh-plugins-builder install dir>/scripts/package_plugin.js {{PLUGIN_DIR}}    # M2
 ```
 
 ## Distribution
