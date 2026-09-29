@@ -1,0 +1,4 @@
+# {{PKG_BASE}} seam bundle layer: activates the provider row BY PACKAGE NAME.
+- insert:
+  - id: {{ROW_ID}}
+    name: {{PKG_NAME}}-provider

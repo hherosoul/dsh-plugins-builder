@@ -1,0 +1,9 @@
+# {{PKG_NAME}} bundle layer.
+# Rows reference the entry by PACKAGE NAME so Node module resolution can find
+# the installed code. Absolute source paths are forbidden here (dev overlay only).
+# Layer order replaces whole rows (no deep merge): overrides must restate every key.
+# Config defaults should be values users are likely to keep; constraints belong
+# to the schema. Users may override this whole row from their own patch layer.
+- insert:
+  - id: {{ROW_ID}}
+    name: {{PKG_NAME}}

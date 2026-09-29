@@ -1,0 +1,13 @@
+{
+  "name": "{{PKG_NAME}}-bundle",
+  "version": "0.1.0",
+  "description": "{{PKG_BASE}} capability seam: bundle layer activating the provider",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml"],
+  "license": "MIT",
+  "dependencies": {
+    "{{PKG_NAME}}-provider": "workspace:*"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

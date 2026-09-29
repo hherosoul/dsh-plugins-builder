@@ -1,0 +1,14 @@
+{
+  "name": "dsh-plugins-builder",
+  "version": "0.1.0",
+  "description": "dsh-plugins-builder: meta-engineer plugin that scaffolds, validates, QA-reports and packages DeepSeek Harness plugins through a 5-phase gated pipeline",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml", "scripts", "templates", "references", "README.md"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

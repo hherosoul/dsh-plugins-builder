@@ -1,0 +1,9 @@
+{
+  "name": "{{PKG_NAME}}-definition",
+  "version": "0.1.0",
+  "description": "{{PKG_BASE}} capability seam: service name + Request/Result contract",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js"],
+  "license": "MIT"
+}

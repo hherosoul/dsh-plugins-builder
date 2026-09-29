@@ -1,0 +1,13 @@
+{
+  "name": "{{PKG_NAME}}",
+  "version": "0.1.0",
+  "description": "{{PKG_BASE}}: a DeepSeek Harness tool plugin",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml", "README.md"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

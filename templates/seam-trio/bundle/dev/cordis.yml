@@ -1,0 +1,6 @@
+# {{PKG_NAME}}-bundle dev overlay: load provider & consumer from source.
+- insert:
+  - id: {{ROW_ID}}
+    name: '{{ABS_PROVIDER_ENTRY}}'
+  - id: {{ROW_ID}}-consumer
+    name: '{{ABS_CONSUMER_ENTRY}}'

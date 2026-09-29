@@ -1,0 +1,10 @@
+{
+  "name": "{{PKG_NAME}}",
+  "version": "0.1.0",
+  "description": "{{PKG_BASE}}: a minimal DeepSeek Harness plugin",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml", "README.md"],
+  "license": "MIT",
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

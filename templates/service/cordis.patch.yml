@@ -1,0 +1,6 @@
+# {{PKG_NAME}} bundle layer.
+# Rows reference the entry by PACKAGE NAME so Node module resolution can find
+# the installed code. Absolute source paths are forbidden here (dev overlay only).
+- insert:
+  - id: {{ROW_ID}}
+    name: {{PKG_NAME}}

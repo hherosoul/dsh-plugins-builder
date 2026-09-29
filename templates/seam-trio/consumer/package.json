@@ -1,0 +1,15 @@
+{
+  "name": "{{PKG_NAME}}-consumer",
+  "version": "0.1.0",
+  "description": "{{PKG_BASE}} capability seam: service consumer",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js"],
+  "license": "MIT",
+  "dependencies": {
+    "{{PKG_NAME}}-definition": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  }
+}

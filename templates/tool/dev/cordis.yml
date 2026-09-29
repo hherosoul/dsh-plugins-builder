@@ -1,0 +1,7 @@
+# Dev overlay: loads the source entry directly by ABSOLUTE path (no packaging).
+# Start with:
+#   pnpm dsh web --patch ./dev/cordis.yml   (inside a source checkout)
+#   dsh web --patch ./dev/cordis.yml        (with the dsh CLI installed)
+- insert:
+  - id: {{ROW_ID}}
+    name: '{{ABS_ENTRY_PATH}}'
