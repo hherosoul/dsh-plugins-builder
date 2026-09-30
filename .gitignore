@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 node_modules/
+
+# Machine-local files (never publish): dev overlay carries the local absolute
+# entry path (see dev/cordis.example.yml); dist/ + *.tgz are package artifacts;
+# qa/evidence/ holds local verification rounds with absolute-path commands.
+dev/cordis.yml
+dist/
+*.tgz
+qa/evidence/

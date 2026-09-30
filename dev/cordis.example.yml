@@ -1,0 +1,9 @@
+# Dev overlay: loads the source entry directly by ABSOLUTE path (no packaging).
+# Copy this file to dev/cordis.yml and fill in YOUR local absolute entry path
+# (dev/cordis.yml is gitignored — it is machine-local by design).
+# Start with:
+#   pnpm dsh web --patch ./dev/cordis.yml   (inside a source checkout)
+#   dsh web --patch ./dev/cordis.yml        (with the dsh CLI installed)
+- insert:
+  - id: plugins-builder
+    name: '<YOUR_LOCAL_ABSOLUTE_PATH_TO>/dsh-plugins-builder/index.js'
