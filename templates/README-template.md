@@ -43,12 +43,15 @@ node <dsh-plugins-builder install dir>/scripts/validate_plugin.js {{PLUGIN_DIR}}
 ```
 
 Runtime verification (L2–L5) and packaging with install-grade acceptance
-(`plugin_verify` / `plugin_package` tools; M2):
+(`plugin_verify` / `plugin_package` tools):
 
 ```sh
-node <dsh-plugins-builder install dir>/scripts/verify_plugin.js {{PLUGIN_DIR}}     # M2
-node <dsh-plugins-builder install dir>/scripts/package_plugin.js {{PLUGIN_DIR}}    # M2
+node <dsh-plugins-builder install dir>/scripts/verify_plugin.js {{PLUGIN_DIR}}
+node <dsh-plugins-builder install dir>/scripts/package_plugin.js {{PLUGIN_DIR}}
 ```
+
+Both need the `dsh` CLI for their runtime layers; without it they degrade
+honestly (exit 3, runtime checks not executed — not publishable).
 
 ## Distribution
 

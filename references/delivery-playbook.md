@@ -20,7 +20,11 @@
 └── LICENSE
 ```
 
-## package_plugin.js 流程（M2；未就绪时按本手册手工等效执行）
+## package_plugin.js 流程（M2 可用）
+
+```
+node <dsh-plugins-builder 安装目录>/scripts/package_plugin.js <插件目录> [--out <目录>] [--skip-smoke]
+```
 
 校验（复用 validate_plugin.js，**单一真相源**）→ 构建（如 TS）→ 打包（tgz 或发布就绪目录）→ **打包后验收**：
 
@@ -40,7 +44,7 @@
 4. （环境允许时）启动冒烟，捕获加载日志；
 5. **强制清理**临时 profile——清理失败 = 报错留痕。
 
-验收结论三档：**通过**（0 error 0 warn）/ **带警告通过**（0 error，warn 已列出）/ **不通过**（存在 error，附阻断清单，退出码 1 不可交付）。报告末尾强制「未覆盖项」段，禁止静默通过。
+验收结论三档：**通过**（0 error 0 warn）/ **带警告通过**（0 error，warn 已列出）/ **不通过**（存在 error，附阻断清单，退出码 1 不可交付）。无 dsh CLI 时 [F] 无法执行，整次运行环境降级（退出码 3，未达可发布标准）。报告末尾强制「未覆盖项」段，禁止静默通过。机读验收报告落 `<产物目录>/acceptance.json`。
 
 ## 分发通道操作要点
 

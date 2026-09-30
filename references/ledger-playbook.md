@@ -1,11 +1,11 @@
 # 台账手册（ledger）
 
 > 台账回答一个问题：**这个插件上次交付是什么状态、改了什么、验收结论如何**。
-> `ledger.js` 为 M2 里程碑（当前诚实输出 unavailable，退出码 2）；M2 前用手工等效记录并如实说明。
+> `ledger.js` 为 M2 里程碑（已可用：bootstrap / add / latest / align / advise）。
 
 ## 存储：本地为主，云端为可选通道
 
-- 本地根目录：`$DSH_HOME/dsh-plugin-ledger/`（未设置时用平台默认配置目录），**不依赖个人绝对路径**。
+- 本地根目录：`$DSH_HOME/dsh-plugin-ledger/`（未设置 `DSH_HOME` 时回退 `~/.dsh/dsh-plugin-ledger/`，运行时解析，**不依赖个人绝对路径**）。
   - `LEDGER.md`：人读账本（全量历史，一行一次动作）。
   - `ledger.jsonl`：机读事件流（与 LEDGER.md 互为镜像，供脚本聚合）。
 - 云端（宿主团队空间能力）为**可选通道**：`bootstrap` 在宿主提供时绑定同名空间；未提供时本地台账完整可用，**不得谎称已同步云端**。
@@ -28,11 +28,16 @@
 
 ```
 node <dsh-plugins-builder 安装目录>/scripts/ledger.js bootstrap          # 首次召唤：绑定（幂等）
-node <dsh-plugins-builder 安装目录>/scripts/ledger.js add --pkg <插件目录> --note "<改了什么>"
+node <dsh-plugins-builder 安装目录>/scripts/ledger.js add --pkg <插件目录> --note "<改了什么>" --verdict 通过|带警告通过|不通过 --tier full|no-key|no-cli [--act create|update|package|deliver]
 node <dsh-plugins-builder 安装目录>/scripts/ledger.js latest             # 当前态视图：每插件一行
 node <dsh-plugins-builder 安装目录>/scripts/ledger.js align              # 双向并集对齐（幂等）
 node <dsh-plugins-builder 安装目录>/scripts/ledger.js advise             # 契约巡检天数 + 待办
 ```
+
+- `add` 七字段必填（时间 / 插件名 / 版本自动取自 package.json；动作默认 `update`），
+  缺字段 = 用法错误（退出码 2）；写入后回读验证，失败退出码 1。
+- `advise` 的巡检阈值天数 SSOT 在 `ledger.js` 的 `INSPECTION_THRESHOLD_DAYS` 常量，
+  文档不写具体数字；巡检基准日期取 `validate_plugin.js` 的 `PLATFORM_CONTRACT_VERSION.last_inspected`。
 
 ## 纪律
 
@@ -40,7 +45,3 @@ node <dsh-plugins-builder 安装目录>/scripts/ledger.js advise             # �
 2. **历史不删**：行数多了靠分层（archive）消化，不靠删历史——历史是账本唯一的价值。
 3. **归属铁律**：只写本工具自己的台账空间；交付出去的插件**不代建台账**。
 4. **契约巡检联动**：`advise` 每次召唤报告「距上次巡检天数」；超过阈值产出待办——对照 `dsh-spec.md` 附录页面清单逐页核对契约变化，产出「契约漂移报告」（变了什么 / 影响哪些已交付插件（台账反查）/ 待办清单）。
-
-## M2 前的诚实替代
-
-脚本未就绪期间：在交付记录中手写上述七字段（随 QA-REPORT 或交付说明一并给出），并明确标注「台账脚本未就绪（M2），本条为手工记录」。**禁止假装已调用 ledger.js。**

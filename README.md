@@ -44,9 +44,9 @@ dsh web --patch ./dev/cordis.yml        # with the dsh CLI installed
 | `plugin_init` | `scripts/init_plugin.js` | 脚手架：6 类模板生成 dsh bundle | M1 可用 |
 | `plugin_validate` | `scripts/validate_plugin.js` | 静态规则 ID 质检（支持 `--policy`） | M1 可用 |
 | `plugin_guide` | （读取 `references/`） | 按主题返回方法论细则 | M1 可用 |
-| `plugin_verify` | `scripts/verify_plugin.js` | 运行时验证矩阵 L2–L5 | M2 未就绪 |
-| `plugin_package` | `scripts/package_plugin.js` | 打包 + 打包后验收（[E]+[F]） | M2 未就绪 |
-| `plugin_ledger` | `scripts/ledger.js` | 交付台账 | M2 未就绪 |
+| `plugin_verify` | `scripts/verify_plugin.js` | 运行时验证矩阵（L1–L3+L5 自动化，L4 手工协议），证据落 `qa/evidence/` | M2 可用 |
+| `plugin_package` | `scripts/package_plugin.js` | 打包 + 打包后验收（[E]+[F]），三档结论 | M2 可用 |
+| `plugin_ledger` | `scripts/ledger.js` | 交付台账（bootstrap/add/latest/align/advise） | M2 可用 |
 | `plugin_qa_report` | `scripts/qa_report.js` | 聚合证据 → QA-REPORT.md | M3 未就绪 |
 
 六个脚本类工具按官方渲染意图契约声明 **terminal 卡片**（`presentCall` / `presentResult`
@@ -61,12 +61,15 @@ dsh web --patch ./dev/cordis.yml        # with the dsh CLI installed
 
 ## 里程碑诚实声明
 
-- M2/M3 工具（`plugin_verify` / `plugin_package` / `plugin_ledger` / `plugin_qa_report`）
-  当前如实返回结构化 `{"status":"unavailable",...}`（退出码 2），**不假装可用**。
-- 运行时验证（L2–L5）依赖 dsh CLI / node / pnpm；无 dsh CLI 的环境仅静态校验可用，
-  交付未达可发布标准，报告中显式声明「未覆盖项」。
+- M3 工具（`plugin_qa_report`）当前如实返回结构化 `{"status":"unavailable",...}`
+  （退出码 2），**不假装可用**。
+- M2 工具（`plugin_verify` / `plugin_package` / `plugin_ledger`）已可用，但运行时层
+  （L3 / L5 / [F]）依赖 dsh CLI；无 dsh CLI 的环境诚实降级（exit 3），运行时验证
+  未执行、交付未达可发布标准，报告中显式声明「未覆盖项」。
+- `verify_plugin.js` 的 L4 行为项（工具调用 / 非法配置 / HMR / 取消）为手工协议，
+  证据 JSON 内含步骤清单；判定归 LLM，脚本不冒充自动化。
 
 ## Environment requirements
 
-- Node ≥18（脚本为零构建 ESM，零第三方依赖）；`dsh` CLI（安装与启动）。
+- Node ≥18（脚本为零构建 ESM，零第三方依赖；`package_plugin.js` 另用系统 `tar` 列包内容）；`dsh` CLI（安装与启动）。
 - 启动本插件无需 API key；对生成插件做模型级行为验证时需要已配置的模型。

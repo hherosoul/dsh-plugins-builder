@@ -39,8 +39,9 @@ export const Config = Schema.object({
 })
 
 // Canonical result shape shared by every script-backed tool (declared once).
-// exitCode semantics: 0 pass; 1 error / acceptance failed; 2 usage error or
-// milestone unavailable.
+// exitCode semantics: 0 pass (or pass-with-warnings); 1 error / acceptance
+// failed; 2 usage error or milestone unavailable; 3 environment degraded —
+// runtime layers not executed (no dsh CLI), delivery NOT publishable.
 const scriptOutputSchema = {
   type: 'object',
   properties: {
@@ -192,28 +193,36 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'plugin_verify',
-    description: 'Orchestrate the L2-L5 runtime verification matrix (build, load, behavior, install-grade) for a DeepSeek Harness plugin and emit evidence JSON. Milestone M2: honestly reports unavailable until then.',
+    description: 'Orchestrate the L2-L5 runtime verification matrix for a DeepSeek Harness plugin: static check, build, dev-overlay load, install-grade check in a temp profile, writing per-layer evidence JSON under <target>/qa/evidence/. L4 behavior items are emitted as a manual protocol (verdict "manual"). Without the dsh CLI the run degrades to L1-L2 only (exit 3, not publishable).',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to verify at runtime' },
+      skipSmoke: { type: 'boolean', description: 'Skip the L5 boot smoke (add + dump + cleanup still run)' },
     },
     output: {
       schema: scriptOutputSchema,
       render: renderScriptResult,
       presentationMeta: scriptPresentationMeta,
     },
-    presentCall: (args) => terminalCallView(['node', 'scripts/verify_plugin.js', args.target]),
+    presentCall: (args) => {
+      const argv = ['node', 'scripts/verify_plugin.js', args.target]
+      if (args.skipSmoke) argv.push('--skip-smoke')
+      return terminalCallView(argv)
+    },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
-      return runScript(verifyPlugin, [resolveTarget(args.target, config)], exec.signal)
+      const scriptArgs = [resolveTarget(args.target, config)]
+      if (args.skipSmoke) scriptArgs.push('--skip-smoke')
+      return runScript(verifyPlugin, scriptArgs, exec.signal)
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'plugin_package',
-    description: 'Validate, build, pack and post-pack-accept a DeepSeek Harness plugin (five-layer cleanliness plus install-based verification). Milestone M2: honestly reports unavailable until then.',
+    description: 'Validate, build, pack (tgz) and post-pack-accept a DeepSeek Harness plugin: [E] five-layer tarball cleanliness plus [F] install-based verification in a temp profile, with a three-tier verdict (通过 / 带警告通过 / 不通过). Without the dsh CLI [F] cannot run (exit 3): "packable" is not "shippable".',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to package' },
-      outputDir: { type: 'string', description: 'Where to place the packaged artifact' },
+      outputDir: { type: 'string', description: 'Where to place the packaged artifact (defaults to <target>/dist)' },
+      skipSmoke: { type: 'boolean', description: 'Skip the [F] boot smoke (add + dump + cleanup still run)' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -222,13 +231,15 @@ export function apply(ctx, config) {
     },
     presentCall: (args) => {
       const argv = ['node', 'scripts/package_plugin.js', args.target]
-      if (args.outputDir) argv.push(args.outputDir)
+      if (args.outputDir) argv.push('--out', args.outputDir)
+      if (args.skipSmoke) argv.push('--skip-smoke')
       return terminalCallView(argv)
     },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
       const scriptArgs = [resolveTarget(args.target, config)]
-      if (args.outputDir) scriptArgs.push(resolveTarget(args.outputDir, config))
+      if (args.outputDir) scriptArgs.push('--out', resolveTarget(args.outputDir, config))
+      if (args.skipSmoke) scriptArgs.push('--skip-smoke')
       return runScript(packagePlugin, scriptArgs, exec.signal)
     },
   }))
@@ -258,11 +269,14 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'plugin_ledger',
-    description: 'Delivery ledger for plugin work: bootstrap, add an entry, show the latest state, align or advise on contract inspection. Milestone M2: honestly reports unavailable until then.',
+    description: 'Local-first delivery ledger for plugin work ($DSH_HOME/dsh-plugin-ledger/): bootstrap (idempotent), add a mandatory seven-field entry, latest state per plugin, bidirectional align, or advise on contract-inspection days. add exit code 0 is required before any delivery claim.',
     parameters: {
       action: { type: 'string', required: true, description: 'Subcommand: bootstrap|add|latest|align|advise' },
       target: { type: 'string', description: 'Plugin directory for add (--pkg)' },
-      note: { type: 'string', description: 'Change note recorded with add' },
+      note: { type: 'string', description: 'Change note recorded with add (e.g. QA round and pass rate)' },
+      verdict: { type: 'string', description: 'Acceptance verdict for add: 通过|带警告通过|不通过' },
+      tier: { type: 'string', description: 'Environment coverage tier for add: full|no-key|no-cli' },
+      act: { type: 'string', description: 'Ledger action for add: create|update|package|deliver (default update)' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -273,6 +287,9 @@ export function apply(ctx, config) {
       const argv = ['node', 'scripts/ledger.js', args.action]
       if (args.target) argv.push('--pkg', args.target)
       if (args.note) argv.push('--note', args.note)
+      if (args.verdict) argv.push('--verdict', args.verdict)
+      if (args.tier) argv.push('--tier', args.tier)
+      if (args.act) argv.push('--act', args.act)
       return terminalCallView(argv)
     },
     presentResult: scriptPresentResult,
@@ -280,6 +297,9 @@ export function apply(ctx, config) {
       const scriptArgs = [args.action]
       if (args.target) scriptArgs.push('--pkg', resolveTarget(args.target, config))
       if (args.note) scriptArgs.push('--note', args.note)
+      if (args.verdict) scriptArgs.push('--verdict', args.verdict)
+      if (args.tier) scriptArgs.push('--tier', args.tier)
+      if (args.act) scriptArgs.push('--act', args.act)
       return runScript(ledger, scriptArgs, exec.signal)
     },
   }))

@@ -21,14 +21,14 @@ DeepSeek Harness（dsh）插件（bundle）**——可安装、可运行、行�
 |------|----------|------|------|
 | `plugin_init` | `init_plugin.js` | 初始化插件目录（`kind=minimal\|tool\|config\|service\|event-hook\|seam-trio`） | M1 |
 | `plugin_validate` | `validate_plugin.js` | 静态合规校验（规则 ID；`--policy` 自定义验收、`--skip-path-check` 就地校验、`--trust-append` 放行第三方 append） | M1 |
-| `plugin_verify` | `verify_plugin.js` | 运行时验证矩阵编排（L2–L5），产出证据 JSON | M2 未就绪 |
-| `plugin_package` | `package_plugin.js` | 校验 → 构建 → 打包 → 打包后验收（[E] 干净度 + [F] 安装式） | M2 未就绪 |
+| `plugin_verify` | `verify_plugin.js` | 运行时验证矩阵编排（L1–L3+L5 自动化；L4 手工协议），证据 JSON 落 `<target>/qa/evidence/` | M2 可用 |
+| `plugin_package` | `package_plugin.js` | 校验 → 构建 → 打包 → 打包后验收（[E] 干净度 + [F] 安装式） | M2 可用 |
 | `plugin_qa_report` | `qa_report.js` | 聚合机读用例结果 + 运行时证据 → QA-REPORT.md（判定归 LLM，脚本只聚合） | M3 未就绪 |
-| `plugin_ledger` | `ledger.js` | 交付台账：bootstrap / add / latest / align / advise | M2 未就绪 |
+| `plugin_ledger` | `ledger.js` | 交付台账：bootstrap / add / latest / align / advise | M2 可用 |
 | `plugin_guide` | （直接读 `references/`） | 按主题返回方法论细则 | M1 |
 
-未就绪脚本输出结构化 `{"status":"unavailable",...}` 并以退出码 2 结束——**如实告知
-用户该能力属于哪个里程碑，禁止用临时手段冒充**。
+未就绪脚本（当前仅 `qa_report.js`）输出结构化 `{"status":"unavailable",...}` 并以
+退出码 2 结束——**如实告知用户该能力属于哪个里程碑，禁止用临时手段冒充**。
 
 **调用纪律（路径）**：优先调用插件工具（脚本路径由插件运行时解析，杜绝相对路径与
 硬编码绝对路径）；CLI 回退一律写 `<dsh-plugins-builder 安装目录>` 占位风格：
@@ -74,7 +74,7 @@ README Quickstart。
 ### Phase 4 — 测试优化
 ```
 plugin_validate(target=<插件目录>)          # 静态 · 规则 ID（M1 可用）
-plugin_verify(target=<插件目录>)            # 运行时 · 分层实证（M2）
+plugin_verify(target=<插件目录>)            # 运行时 · 分层实证（M2 可用）
 ```
 静态合规 + 运行时验证矩阵（L1–L5）+ 9 维度场景质检 + 迭代（失败 → 定位代码 / 配置 /
 文档 → 最小改动 → 复测，≤3 轮）+ 回归。详见 `qa-playbook.md`（含证据 JSON 格式与
@@ -86,19 +86,19 @@ Phase 2/3。
 
 ### Phase 5 — 打包交付
 ```
-plugin_package(target=<插件目录>)           # M2
-plugin_ledger(action=add, target=<插件目录>, note="<改了什么>")
+plugin_package(target=<插件目录>)           # M2 可用
+plugin_ledger(action=add, target=<插件目录>, note="<改了什么>", verdict=<通过|带警告通过|不通过>, tier=<full|no-key|no-cli>)
 ```
-`package_plugin.js`（M2）在打完包后**自动执行打包后验收**：
+`package_plugin.js`（M2 可用）在打完包后**自动执行打包后验收**：
 - **[E] 包干净度（五层）**：清单完整 → 无杂质 → `package.json` 完备（`dsh.bundle` /
   `files` / `type` / version / license）→ 清单与 `files` 一致 → 构建产物与源码版本一致。
 - **[F] 安装式可发布性**：净目录临时 profile → `dsh plugin add <包>` →
   `dsh --profile <tmp> --dump-config` 确认层出现 →（环境允许时）启动冒烟 → 清理。
   **「可发布」= 装进去能用，不是包打得出来。**
 
-M2 未就绪前：按 `delivery-playbook.md` 手工执行同等步骤并如实记录，不得宣称已自动化验收。
 验收结论三档：**通过**（0 error 0 warn）/ **带警告通过** / **不通过**（附阻断清单）。
-报告末尾强制「未覆盖项」段，禁止静默通过。
+报告末尾强制「未覆盖项」段，禁止静默通过。无 dsh CLI 时 [F] 无法执行，整次运行
+环境降级（exit 3），不得宣称交付。
 **门禁**：打包成功 + 打包后验收通过（前两档）+ 记账成功 → 交付。
 
 ### 收工 — 记账
@@ -117,10 +117,11 @@ plugin_ledger(action=add, target=<插件包路径>, note="<改了什么>")
 ## 退出码语义（全脚本统一）
 
 | 码 | 含义 |
-|---|---|
-| 0 | 通过 |
+|----|------|
+| 0 | 通过（含带警告通过） |
 | 1 | 有 error / 验收不通过 |
 | 2 | 用法错误 / 里程碑未就绪（unavailable） |
+| 3 | 环境降级：运行时层未执行（无 dsh CLI；verify / package 专属）——未达可发布标准 |
 
 ## 铁律（决策前必读）
 
@@ -154,6 +155,6 @@ plugin_ledger(action=add, target=<插件包路径>, note="<改了什么>")
 ## 契约漂移防线
 
 dsh 处于技术预览期。开工前查 `dsh-spec.md` 版本戳；距上次巡检过久
-（`ledger.js advise` 会报告天数，M2）→ 按其附录页面清单逐页核对官方文档 → 发现漂移
+（`ledger.js advise` 会报告天数）→ 按其附录页面清单逐页核对官方文档 → 发现漂移
 同步改三处且只改三处：`dsh-spec.md`（契约）+ `validate_plugin.js`（规则）+ 受影响模板，
 一次改动一个原子提交，账本记录。

@@ -12,6 +12,9 @@
 //                   C = scenario dimensions (droppable with reason).
 //     - Heuristic rules are warn-level and say so (semantic re-check belongs
 //       to Phase 4); the validator never pretends certainty it does not have.
+//       Source scanning uses the zero-dependency lexer in scripts/_analyze.js
+//       (token-level, comment/string-safe, balanced-block scoped) — still a
+//       lexer, not an AST; known approximations are documented there.
 //     - Exit codes: 0 pass; 1 errors found; 2 usage error.
 //
 // Usage:
@@ -22,13 +25,16 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  balancedEnd, extractBlocks, memberAccesses, propValueBlock, stringValues, tokenize,
+} from './_analyze.js'
 import { isMain, runMain } from './_cli.js'
 
 // ---------------------------------------------------------------------------
 // 平台契约版本戳：校验器内置的 dsh 契约快照。每次官方规范巡检后更新此处，
 // 巡检日期一并记录。校验输出以 info 级打印，供「契约漂移」审计。
 // ---------------------------------------------------------------------------
-const PLATFORM_CONTRACT_VERSION = {
+export const PLATFORM_CONTRACT_VERSION = {
   spec_url: 'https://deepseek-harness.github.io/deepseek-harness/develop/basic/',
   contract_version: '2026-09-30',
   last_inspected: '2026-09-30',
@@ -127,11 +133,11 @@ export const CHECKS = {
 
 // 未覆盖项：脚本没有规则覆盖的检查面，显式声明归属，禁止静默通过。
 const UNCOVERED_ITEMS = [
-  ['运行时行为（加载 / 调用 / HMR / 取消）', 'verify_plugin.js L3–L4（M2）'],
+  ['运行时行为（加载 / 调用 / HMR / 取消）', 'verify_plugin.js L2–L5（M2 已可用；L4 行为项为手工协议，见其证据报告的未覆盖项）'],
   ['调用准确性（混淆矩阵）', 'Phase 4 维度 1（LLM 层；无密钥环境降级为 description 语义评审）'],
   ['凭据 / 隐私语义级审计', 'Phase 4 维度 9（脚本只做模式级扫描）'],
   ['启发式规则语义复核（TS-003 / TOOL-004 / TOOL-005 / CFG-002）', 'Phase 4（LLM 层）'],
-  ['安装式可发布性', 'package_plugin.js [F]（M2）'],
+  ['安装式可发布性', 'package_plugin.js [F]（M2 已可用；无 dsh CLI 环境降级为 exit 3，未达可发布标准）'],
 ]
 
 const VALID_SEVERITIES = ['error', 'warn', 'info']
@@ -778,6 +784,8 @@ function iterTextFiles(root, exts, exemptParts) {
 function scanSecurity(root, result) {
   // SEC-001/002/003。scripts/ 与 templates/ 白名单豁免（占位符机制实现所在）；
   // SEC-002 另豁免 dev/（平台契约要求覆盖层绝对路径）。
+  // 源码文件（.js/.ts）走 token 级扫描（注释 / 正则字面量免疫，见 _analyze.js）；
+  // 文档与配置文件维持原文扫描。
   const exts = new Set([...PLACEHOLDER_SCAN_EXTS, ...SOURCE_EXTS])
   for (const f of iterTextFiles(root, exts, ['scripts', 'templates'])) {
     let text
@@ -787,21 +795,79 @@ function scanSecurity(root, result) {
       continue
     }
     const rel = f.parts.join('/')
-    for (const [pattern, label] of CREDENTIAL_PATTERNS) {
-      if (pattern.test(text)) emit(result, 'SEC-001', { path: rel, pattern: label })
+    const isSource = SOURCE_EXTS.has(extname(f.abs).toLowerCase())
+    if (isSource) scanSecuritySource(text, f, rel, result)
+    else scanSecurityText(text, f, rel, result)
+  }
+}
+
+function scanSecurityText(text, f, rel, result) {
+  for (const [pattern, label] of CREDENTIAL_PATTERNS) {
+    if (pattern.test(text)) emit(result, 'SEC-001', { path: rel, pattern: label })
+  }
+  // SEC-002 豁免 dev/ 与 qa/（同 scanSecuritySource：证据命令须如实记录绝对路径）。
+  if (!f.parts.includes('dev') && !f.parts.includes('qa')) {
+    for (const [pattern] of PERSONAL_PATH_PATTERNS) {
+      const m = text.match(pattern)
+      if (m) emit(result, 'SEC-002', { path: rel, literal: m[0] })
     }
-    if (!f.parts.includes('dev')) {
-      for (const [pattern] of PERSONAL_PATH_PATTERNS) {
-        const m = text.match(pattern)
-        if (m) emit(result, 'SEC-002', { path: rel, literal: m[0] })
-      }
+  }
+  for (const m of text.matchAll(EMAIL_PATTERN)) {
+    const domain = m[1].toLowerCase()
+    if (!EXAMPLE_DOMAINS.has(domain)) {
+      emit(result, 'SEC-003', { path: rel, literal: m[0] })
+      break
     }
-    for (const m of text.matchAll(EMAIL_PATTERN)) {
-      const domain = m[1].toLowerCase()
-      if (!EXAMPLE_DOMAINS.has(domain)) {
-        emit(result, 'SEC-003', { path: rel, literal: m[0] })
+  }
+}
+
+// SEC-001 的 key/secret/token 字面量模式（原文形态）：[key] [:=] ['16+ 字符']。
+const KEYISH_NAME_RE = /^(api[_-]?key|secret|access[_-]?token|password)$/i
+// 非全局变体：对单个字符串值做首次匹配（EMAIL_PATTERN 带 /g，exec 有状态）。
+const EMAIL_MATCH_RE = /[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/
+
+function scanSecuritySource(text, f, rel, result) {
+  const tokens = tokenize(text)
+  const values = stringValues(tokens)
+  // 值形态模式（Bearer / sk- / gh / xox）：命中字符串 / 模板串值。
+  for (const [pattern, label] of CREDENTIAL_PATTERNS.slice(0, 4)) {
+    for (const value of values) {
+      if (pattern.test(value)) {
+        emit(result, 'SEC-001', { path: rel, pattern: label })
         break
       }
+    }
+  }
+  // key/secret/token 字面量：token 序列 [keyish] [:=] ['16+ 字符串值']。
+  for (let i = 0; i + 2 < tokens.length; i += 1) {
+    const k = tokens[i]
+    const op = tokens[i + 1]
+    const v = tokens[i + 2]
+    if ((k.type === 'ident' || k.type === 'string') && KEYISH_NAME_RE.test(k.value)
+      && op.type === 'punct' && (op.value === ':' || op.value === '=')
+      && v.type === 'string' && /^[A-Za-z0-9\-_.]{16,}$/.test(v.value)) {
+      emit(result, 'SEC-001', { path: rel, pattern: 'key/secret/token 字面量' })
+      break
+    }
+  }
+  // SEC-002 豁免 dev/（平台契约要求绝对路径）与 qa/（verify_plugin.js 产出的
+  // 本地证据目录，命令记录必须如实含绝对路径）；凭据类 SEC-001 不豁免。
+  if (!f.parts.includes('dev') && !f.parts.includes('qa')) {
+    for (const [pattern] of PERSONAL_PATH_PATTERNS) {
+      for (const value of values) {
+        const m = value.match(pattern)
+        if (m) {
+          emit(result, 'SEC-002', { path: rel, literal: m[0] })
+          break
+        }
+      }
+    }
+  }
+  for (const value of values) {
+    const m = value.match(EMAIL_MATCH_RE)
+    if (m && !EXAMPLE_DOMAINS.has(m[1].toLowerCase())) {
+      emit(result, 'SEC-003', { path: rel, literal: m[0] })
+      break
     }
   }
 }
@@ -1119,94 +1185,163 @@ function validateEntryTs(pluginDir, pkg, result) {
     }
   }
 
+  // TS-003：token 级匹配（注释 / 字符串中的 "ctx.tools" 不再误报）。
+  // inject 声明 = [inject, = 或 :] 后平衡 [ ] 块内的字符串值；
+  // 使用点 = ctx.<svc> 标识符成员访问。
+  const tokens = tokenize(raw)
   const declared = new Set()
-  for (const m of text.matchAll(/inject\s*=\s*\[([^\]]*)\]/g)) {
-    for (const q of m[1].matchAll(/['"]([^'"]+)['"]/g)) declared.add(q[1])
+  for (let i = 0; i + 2 < tokens.length; i += 1) {
+    const t = tokens[i]
+    const op = tokens[i + 1]
+    const arr = tokens[i + 2]
+    if (t.type === 'ident' && t.value === 'inject'
+      && op.type === 'punct' && (op.value === '=' || op.value === ':')
+      && arr.type === 'punct' && arr.value === '[') {
+      const end = balancedEnd(tokens, i + 2)
+      for (const s of tokens.slice(i + 3, end - 1)) {
+        if (s.type === 'string') declared.add(s.value)
+      }
+    }
   }
+  const used = memberAccesses(tokens, 'ctx')
   for (const svc of KNOWN_SERVICES) {
-    if (new RegExp(`ctx\\.${svc}\\b`).test(text) && !declared.has(svc)) {
+    if (used.has(svc) && !declared.has(svc)) {
       emit(result, 'TS-003', { path: entryRel, svc })
     }
   }
 }
 
-function extractMarkerBlocks(text, marker) {
-  // 提取 marker( 开头的括号平衡块（跳过字符串字面量）。
-  const blocks = []
-  let i = 0
-  const n = text.length
-  for (;;) {
-    const j = text.indexOf(marker, i)
-    if (j < 0) break
-    let p = j + marker.length
-    if (p >= n || text[p] !== '(') {
-      i = j + marker.length
+// TOOL 检查的 token 级辅助（作用域精确，仍为启发式；语义复核归 Phase 4）。
+
+function hasKeyForm(tokens, key) {
+  // key 以属性（key:）或方法简写（key(）形态出现。
+  for (let i = 0; i + 1 < tokens.length; i += 1) {
+    const t = tokens[i]
+    if (t.type !== 'ident' || t.value !== key) continue
+    const next = tokens[i + 1]
+    if (next.type === 'punct' && (next.value === ':' || next.value === '(')) return true
+  }
+  return false
+}
+
+function hasDirectProperty(nodeTokens, key, strValue) {
+  // 对象节点自身深度（depth 0）上的直接属性。strValue 为 undefined 时做
+  // 存在性检查（additionalProperties）；否则要求 [key : 'strValue']。
+  let depth = 0
+  for (let i = 0; i < nodeTokens.length; i += 1) {
+    const t = nodeTokens[i]
+    if (t.type === 'punct') {
+      if ('([{'.includes(t.value)) depth += 1
+      else if (')]}'.includes(t.value)) depth -= 1
       continue
     }
-    let depth = 0
-    const start = p + 1
-    while (p < n) {
-      const ch = text[p]
-      if (ch === "'" || ch === '"' || ch === '`') {
-        const q = ch
-        p += 1
-        while (p < n && text[p] !== q) {
-          if (text[p] === '\\') p += 1
-          p += 1
-        }
-      } else if (ch === '(') {
-        depth += 1
-      } else if (ch === ')') {
-        depth -= 1
-        if (depth === 0) break
-      }
-      p += 1
-    }
-    blocks.push(text.slice(start, p))
-    i = p + 1
+    if (depth !== 0) continue
+    if (!(t.type === 'ident' || t.type === 'string') || t.value !== key) continue
+    if (strValue === undefined) return true
+    const colon = nodeTokens[i + 1]
+    const v = nodeTokens[i + 2]
+    if (colon && colon.type === 'punct' && colon.value === ':'
+      && v && v.type === 'string' && v.value === strValue) return true
   }
-  return blocks
+  return false
+}
+
+function objectTypedNodes(regionTokens) {
+  // 区域内所有声明了直接 `type: 'object'` 属性的对象字面量节点（含数组/
+  // 调用参数内嵌套），返回各节点的内部 token 数组。
+  const nodes = []
+  const walk = (toks) => {
+    for (let j = 0; j < toks.length; j += 1) {
+      const v = toks[j]
+      if (v.type !== 'punct') continue
+      if (v.value === '{') {
+        const end = balancedEnd(toks, j)
+        const inner = toks.slice(j + 1, end - 1)
+        if (hasDirectProperty(inner, 'type', 'object')) nodes.push(inner)
+        walk(inner)
+        j = end - 1
+      } else if (v.value === '(' || v.value === '[') {
+        const end = balancedEnd(toks, j)
+        walk(toks.slice(j + 1, end - 1))
+        j = end - 1
+      }
+    }
+  }
+  walk(regionTokens)
+  return nodes
+}
+
+function returnsContentBlock(regionTokens) {
+  // return { type: 'text' ... } 或 return [{ type: 'text' ... }]（token 序列级）。
+  for (let i = 0; i + 4 < regionTokens.length; i += 1) {
+    if (regionTokens[i].type !== 'ident' || regionTokens[i].value !== 'return') continue
+    let j = i + 1
+    const a = regionTokens[j]
+    if (!a || a.type !== 'punct' || (a.value !== '{' && a.value !== '[')) continue
+    if (a.value === '[') j += 1 // 数组形态：跳过包装的 '['
+    const b = regionTokens[j]
+    const k = regionTokens[j + 1]
+    const colon = regionTokens[j + 2]
+    const v = regionTokens[j + 3]
+    if (b && b.type === 'punct' && b.value === '{'
+      && k && k.type === 'ident' && k.value === 'type'
+      && colon && colon.type === 'punct' && colon.value === ':'
+      && v && v.type === 'string' && v.value === 'text') return true
+  }
+  return false
 }
 
 function validateTools(pluginDir, result) {
-  // TOOL-001..005：defineTool 约定（括号平衡块级启发式）。
+  // TOOL-001..005：defineTool 约定（token 级块作用域启发式，scripts/_analyze.js）。
   for (const src of readSourceFiles(pluginDir)) {
-    let text
+    let raw
     try {
-      text = readTextStrict(src)
+      raw = readTextStrict(src)
     } catch {
       continue
     }
-    if (!text.includes('defineTool')) continue
+    if (!raw.includes('defineTool')) continue
     const rel = relPosix(pluginDir, src)
-    for (const block of extractMarkerBlocks(text, 'defineTool')) {
-      // 属性形式（key:）与方法简写（[async] key(）都接受
+    const tokens = tokenize(raw)
+    for (const blk of extractBlocks(tokens, 'defineTool')) {
+      const block = blk.tokens
       const missing = ['name', 'description', 'parameters', 'output', 'execute']
-        .filter((k) => !new RegExp(`\\b${k}\\s*[:\\(]`).test(block))
+        .filter((k) => !hasKeyForm(block, k))
       if (missing.length > 0) {
         emit(result, 'TOOL-001', { path: rel, missing: missing.join('、') })
       }
-      if (!(/\bschema\s*:/.test(block) && /\brender\s*:/.test(block))) {
+      if (!(hasKeyForm(block, 'schema') && hasKeyForm(block, 'render'))) {
         emit(result, 'TOOL-002', { path: rel })
       }
-      const dm = block.match(/description\s*:\s*['"]([^'"]+)['"]/)
-      if (dm && dm[1].length < 20) {
-        emit(result, 'TOOL-003', { path: rel, length: dm[1].length })
+      const desc = propValueBlock(block, 'description')
+      const descStr = desc && desc.length === 1 && desc[0].type === 'string' ? desc[0].value : null
+      if (descStr !== null && descStr.length < 20) {
+        emit(result, 'TOOL-003', { path: rel, length: descStr.length })
       }
-      if (/['"]?type['"]?\s*:\s*['"]object['"]/.test(block) && !block.includes('additionalProperties')) {
-        emit(result, 'TOOL-004', { path: rel })
-      }
-      const eidx = block.indexOf('execute')
-      if (eidx >= 0) {
-        const tail = block.slice(eidx)
-        if (/return\s+\[\s*\{[^}]{0,80}type\s*:\s*['"]text['"]/.test(tail)
-          || /return\s+\{\s*type\s*:\s*['"]text['"]/.test(tail)) {
-          emit(result, 'TOOL-005', { path: rel })
+      // TOOL-004：parameters 与 output.schema 中每个 type:'object' 节点独立检查，
+      // 本节点无 additionalProperties 即报（不再被块内其他位置的声明掩护）。
+      const params = propValueBlock(block, 'parameters')
+      const output = propValueBlock(block, 'output')
+      const schemaRegion = output ? propValueBlock(output, 'schema') : null
+      for (const region of [params, schemaRegion]) {
+        if (!region) continue
+        for (const node of objectTypedNodes(region)) {
+          if (!hasDirectProperty(node, 'additionalProperties')) {
+            emit(result, 'TOOL-004', { path: rel })
+          }
         }
+      }
+      // TOOL-005：仅扫描 execute 值域内的 return（execute 之后的代码不再误报）。
+      const exec = propValueBlock(block, 'execute')
+      if (exec && returnsContentBlock(exec)) {
+        emit(result, 'TOOL-005', { path: rel })
       }
     }
   }
 }
+
+// CFG-002 可调参数名阈值（与原正则实现保持一致）。
+const TUNABLE_NAME_RE = /(timeout|interval|port|limit|^max_|^min_|retr|delay|endpoint)/i
 
 function validateConfig(pluginDir, result) {
   // CFG-001..003：配置纪律。
@@ -1241,15 +1376,31 @@ function validateConfig(pluginDir, result) {
       }
     }
 
-    for (const line of text.split('\n')) {
-      const stripped = line.trim()
-      if (stripped.startsWith('//') || stripped.startsWith('*') || stripped.startsWith('/*')) continue
-      const cm = stripped.match(/^(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d[\d_]*|["'][^"']{0,80}["'])/)
-      if (cm && /(timeout|interval|port|limit|^max_|^min_|retr|delay|endpoint)/i.test(cm[1])) {
-        emit(result, 'CFG-002', { path: rel, literal: `${cm[1]} = ${cm[2]}` })
+    // CFG-002：token 级声明扫描（注释天然跳过；函数体内 let/var 也覆盖；
+    // 模板串 URL 由漏报变命中）。可调参数名阈值与原实现一致。
+    // seenLiterals 去重：同一字面量（如 URL）只报一次，避免声明形态与
+    // 裸值形态双重告警。
+    const tokens = tokenize(text)
+    const seenLiterals = new Set()
+    for (let i = 0; i + 3 < tokens.length; i += 1) {
+      const kw = tokens[i]
+      const nameTok = tokens[i + 1]
+      const eq = tokens[i + 2]
+      const val = tokens[i + 3]
+      if (kw.type === 'ident' && (kw.value === 'const' || kw.value === 'let' || kw.value === 'var')
+        && nameTok.type === 'ident' && eq.type === 'punct' && eq.value === '='
+        && (val.type === 'number' || val.type === 'string')
+        && TUNABLE_NAME_RE.test(nameTok.value)) {
+        const literal = `${nameTok.value} = ${val.value}`
+        seenLiterals.add(val.value)
+        emit(result, 'CFG-002', { path: rel, literal })
       }
-      const um = stripped.match(/['"](https?:\/\/[^'"]+)['"]/)
-      if (um) emit(result, 'CFG-002', { path: rel, literal: um[1] })
+    }
+    for (const value of stringValues(tokens)) {
+      if (/^https?:\/\//.test(value) && !seenLiterals.has(value)) {
+        seenLiterals.add(value)
+        emit(result, 'CFG-002', { path: rel, literal: value })
+      }
     }
 
     for (const m of text.matchAll(/(\w+)\s*:\s*(Schema\.[^\n]+)/g)) {
@@ -1282,8 +1433,21 @@ function validateDeps(pluginDir, pkg, result) {
       continue
     }
     const rel = relPosix(pluginDir, src)
+    // DEP-001：token 级 import 收集（注释免疫；动态 import() 与裸导入由
+    // 漏报变命中）。作用域仍限 @deepseek-ai/，不扩大到全外部包。
     const imps = new Set()
-    for (const m of text.matchAll(/from\s+['"](@deepseek-ai\/[^'"\/]+)['"]/g)) imps.add(m[1])
+    const tokens = tokenize(text)
+    for (let i = 0; i + 1 < tokens.length; i += 1) {
+      const t = tokens[i]
+      const s = tokens[i + 1]
+      if (!s || s.type !== 'string' || !s.value.startsWith('@deepseek-ai/')) continue
+      if (t.type === 'ident' && (t.value === 'from' || t.value === 'import')) {
+        imps.add(s.value)
+      } else if (t.type === 'punct' && t.value === '('
+        && i >= 1 && tokens[i - 1].type === 'ident' && tokens[i - 1].value === 'import') {
+        imps.add(s.value)
+      }
+    }
     for (const imp of imps) {
       if (!allDeclared.has(imp)) {
         emit(result, 'DEP-001', { path: rel, pkg: imp })
