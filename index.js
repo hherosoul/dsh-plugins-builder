@@ -32,10 +32,13 @@ const REFERENCES_DIR = join(BASE_DIR, 'references')
 export const name = 'plugins-builder'
 export const inject = ['tools']
 
-/** @typedef {{ workspaceRoot?: string }} Config */
+/** @typedef {{ workspaceRoot?: string, dshBin?: string }} Config */
 
 export const Config = Schema.object({
-  workspaceRoot: Schema.string().default(''),
+  workspaceRoot: Schema.string().default('')
+    .description('Anchor directory for relative path arguments; empty = host process cwd.'),
+  dshBin: Schema.string().default('')
+    .description('dsh CLI used by plugin_verify / plugin_package; empty = $DSH_BIN, then PATH, then the app-bundled CLI, then the usual install locations.'),
 })
 
 // Canonical result shape shared by every script-backed tool (declared once).
@@ -193,10 +196,11 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'plugin_verify',
-    description: 'Orchestrate the L2-L5 runtime verification matrix for a DeepSeek Harness plugin: static check, build, dev-overlay load, install-grade check in a temp profile, writing per-layer evidence JSON under <target>/qa/evidence/. L4 behavior items are emitted as a manual protocol (verdict "manual"). Without the dsh CLI the run degrades to L1-L2 only (exit 3, not publishable).',
+    description: 'Orchestrate the L2-L5 runtime verification matrix for a DeepSeek Harness plugin: static check, build, dev-overlay load, install-grade check in a temp profile, writing per-layer evidence JSON under <target>/qa/evidence/. L4 behavior items are emitted as a manual protocol (verdict "manual"). The dsh CLI is located via the dshBin parameter, config.dshBin, $DSH_BIN, PATH, the desktop app bundle, then the usual install locations; only when none works does the run degrade to L1-L2 (exit 3, not publishable) and report every path it tried.',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to verify at runtime' },
       skipSmoke: { type: 'boolean', description: 'Skip the L5 boot smoke (add + dump + cleanup still run)' },
+      dshBin: { type: 'string', description: 'Path to the dsh CLI (defaults to config.dshBin / $DSH_BIN / auto-discovery)' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -206,23 +210,27 @@ export function apply(ctx, config) {
     presentCall: (args) => {
       const argv = ['node', 'scripts/verify_plugin.js', args.target]
       if (args.skipSmoke) argv.push('--skip-smoke')
+      if (args.dshBin) argv.push('--dsh', args.dshBin)
       return terminalCallView(argv)
     },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
       const scriptArgs = [resolveTarget(args.target, config)]
       if (args.skipSmoke) scriptArgs.push('--skip-smoke')
+      const dshBin = args.dshBin || config.dshBin
+      if (dshBin) scriptArgs.push('--dsh', dshBin)
       return runScript(verifyPlugin, scriptArgs, exec.signal)
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'plugin_package',
-    description: 'Validate, build, pack (tgz) and post-pack-accept a DeepSeek Harness plugin: [E] five-layer tarball cleanliness plus [F] install-based verification in a temp profile, with a three-tier verdict (通过 / 带警告通过 / 不通过). Without the dsh CLI [F] cannot run (exit 3): "packable" is not "shippable".',
+    description: 'Validate, build, pack (tgz) and post-pack-accept a DeepSeek Harness plugin: [E] five-layer tarball cleanliness plus [F] install-based verification in a temp profile, with a three-tier verdict (通过 / 带警告通过 / 不通过). The dsh CLI is located via dshBin / config.dshBin / $DSH_BIN / PATH / the app bundle; only when none works does [F] skip (exit 3): "packable" is not "shippable".',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to package' },
       outputDir: { type: 'string', description: 'Where to place the packaged artifact (defaults to <target>/dist)' },
       skipSmoke: { type: 'boolean', description: 'Skip the [F] boot smoke (add + dump + cleanup still run)' },
+      dshBin: { type: 'string', description: 'Path to the dsh CLI (defaults to config.dshBin / $DSH_BIN / auto-discovery)' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -233,6 +241,7 @@ export function apply(ctx, config) {
       const argv = ['node', 'scripts/package_plugin.js', args.target]
       if (args.outputDir) argv.push('--out', args.outputDir)
       if (args.skipSmoke) argv.push('--skip-smoke')
+      if (args.dshBin) argv.push('--dsh', args.dshBin)
       return terminalCallView(argv)
     },
     presentResult: scriptPresentResult,
@@ -240,6 +249,8 @@ export function apply(ctx, config) {
       const scriptArgs = [resolveTarget(args.target, config)]
       if (args.outputDir) scriptArgs.push('--out', resolveTarget(args.outputDir, config))
       if (args.skipSmoke) scriptArgs.push('--skip-smoke')
+      const dshBin = args.dshBin || config.dshBin
+      if (dshBin) scriptArgs.push('--dsh', dshBin)
       return runScript(packagePlugin, scriptArgs, exec.signal)
     },
   }))

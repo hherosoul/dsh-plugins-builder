@@ -23,13 +23,16 @@
 // 3 = environment degraded ([F] not executed, 未达可发布标准).
 //
 // Usage:
-//     node package_plugin.js <path/to/plugin-dir> [--out <dir>] [--skip-smoke]
+//     node package_plugin.js <path/to/plugin-dir> [--out <dir>] [--skip-smoke] [--dsh <path>]
+//
+// CLI resolution: $DSH_BIN / --dsh win, then PATH, then the desktop app bundle
+// derived from this process, then the usual install locations (_run.js).
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { isMain, runMain } from './_cli.js'
 import { main as validateMain } from './validate_plugin.js'
-import { TIMEOUTS, detectDsh, dshHome, forceCleanup, run, tempProfileName } from './_run.js'
+import { DSH_HINT, TIMEOUTS, describeDshFailure, dshHome, forceCleanup, resolveDsh, run, tempProfileName } from './_run.js'
 
 // npm always bundles these alongside `files` entries (docs auto-inclusion).
 const NPM_AUTO_FILES = [/^package\.json$/, /^README(\..*)?$/i, /^LICEN[CS]E(\..*)?$/i, /^CHANGELOG(\..*)?$/i]
@@ -72,10 +75,19 @@ function packagedPkgJson(tgz) {
 }
 
 export function main(argv) {
-  const outIdx = argv.indexOf('--out')
-  const outArg = outIdx >= 0 ? argv[outIdx + 1] : null
-  const outValIdx = outIdx >= 0 ? outIdx + 1 : -1
-  const targetCandidates = argv.filter((a, i) => !a.startsWith('--') && i !== outValIdx)
+  const optionValue = (name) => {
+    const i = argv.indexOf(name)
+    return i >= 0 ? (argv[i + 1] ?? null) : null
+  }
+  const outArg = optionValue('--out')
+  const dshArg = optionValue('--dsh')
+  // Option values are not the positional target.
+  const valueIndexes = new Set()
+  for (const name of ['--out', '--dsh']) {
+    const i = argv.indexOf(name)
+    if (i >= 0) valueIndexes.add(i + 1)
+  }
+  const targetCandidates = argv.filter((a, i) => !a.startsWith('--') && !valueIndexes.has(i))
   const skipSmoke = argv.includes('--skip-smoke')
 
   const pluginDir = targetCandidates.length === 1
@@ -84,9 +96,10 @@ export function main(argv) {
   if (!pluginDir) {
     return {
       exitCode: 2, stdout: '',
-      stderr: '用法: node package_plugin.js <plugin-dir> [--out <dir>] [--skip-smoke]\n'
+      stderr: '用法: node package_plugin.js <plugin-dir> [--out <dir>] [--skip-smoke] [--dsh <path>]\n'
         + '  --out <dir>      产物目录（默认 <plugin>/dist）\n'
-        + '  --skip-smoke     跳过 [F] 启动冒烟（仍执行 add + dump + 清理）',
+        + '  --skip-smoke     跳过 [F] 启动冒烟（仍执行 add + dump + 清理）\n'
+        + '  --dsh <path>     指定 dsh CLI（默认 $DSH_BIN → PATH → 应用内置 CLI → 常见安装位置）',
     }
   }
   const pkgPath = join(pluginDir, 'package.json')
@@ -202,22 +215,26 @@ export function main(argv) {
   }
 
   // ---- 5. [F] 安装式可发布性（需 dsh CLI） ------------------------------------
-  const dsh = detectDsh()
+  const dsh = resolveDsh({ explicit: dshArg })
   const profile = tempProfileName(pluginName)
   const profileDir = join(dshHome(), 'profiles', profile)
   if (!dsh.available) {
-    put('F', { verdict: 'degraded', reason: '无 dsh CLI，[F] 安装式验收未执行' })
-    uncovered.push('[F] 安装式验收（无 dsh CLI，未执行）——「可发布」无法证明，未达可发布标准')
-    lines.push('[F] 安装式验收    [degraded]  无 dsh CLI，未执行')
+    const why = describeDshFailure(dsh)
+    put('F', {
+      verdict: 'degraded', reason: `无可用 dsh CLI（${dsh.reason}），[F] 安装式验收未执行`,
+      resolution: { candidates: dsh.candidates, tried: dsh.tried }, detail: why,
+    })
+    uncovered.push(`[F] 安装式验收（未执行，${dsh.reason}）——「可发布」无法证明，未达可发布标准。${why}`)
+    lines.push(`[F] 安装式验收    [degraded]  ${dsh.reason}，未执行`)
   } else {
-    const add = run('dsh', ['plugin', '--profile', profile, 'add', tgzPath], { timeout: TIMEOUTS.install })
+    const add = run(dsh.bin, ['plugin', '--profile', profile, 'add', tgzPath], { timeout: TIMEOUTS.install })
     const addOk = add.exitCode === 0 && !add.timedOut
     put('F-add', { command: add.command, exit_code: add.exitCode, verdict: addOk ? 'pass' : 'fail', evidence: excerpt(`${add.stdout}\n${add.stderr}`.trim()) })
     lines.push(`[F] 安装式验收:`)
     lines.push(`   F1 净 profile 安装 ${mark(addOk ? 'pass' : 'fail')}  (${add.command})`)
     if (!addOk) errors.push('F1 安装失败（tarball 装不进 profile = 不可交付）')
     else {
-      const dump = run('dsh', ['--profile', profile, '--dump-config'], { timeout: TIMEOUTS.dump })
+      const dump = run(dsh.bin, ['--profile', profile, '--dump-config'], { timeout: TIMEOUTS.dump })
       const layerSeen = dump.stdout.includes(`# == ${pluginName}`)
       const noFailed = !/FAILED/.test(dump.stdout)
       const dumpOk = dump.exitCode === 0 && layerSeen && noFailed && !dump.timedOut
@@ -225,7 +242,7 @@ export function main(argv) {
       lines.push(`   F2 层确认        ${mark(dumpOk ? 'pass' : 'fail')}  (期望 "# == ${pluginName}")`)
       if (!dumpOk) errors.push('F2 dump-config 未出现目标层或有 FAILED fiber')
       if (!skipSmoke) {
-        const smoke = run('dsh', ['--profile', profile], { timeout: TIMEOUTS.smoke })
+        const smoke = run(dsh.bin, ['--profile', profile], { timeout: TIMEOUTS.smoke })
         const smokeOk = !/FAILED/.test(smoke.stdout + smoke.stderr)
         put('F-smoke', { command: smoke.command, exit_code: smoke.exitCode, signal: smoke.signal, timed_out: smoke.timedOut, verdict: smokeOk ? 'pass' : 'fail', evidence: excerpt(`${smoke.stdout}\n${smoke.stderr}`.trim()) })
         lines.push(`   F3 启动冒烟      ${mark(smokeOk ? 'pass' : 'fail')}  (warn 级：超时杀进程，看日志)`)
@@ -236,7 +253,7 @@ export function main(argv) {
       }
     }
     // 强制清理（清理失败 = 报错留痕）。
-    const remove = run('dsh', ['plugin', '--profile', profile, 'remove', pluginName], { timeout: TIMEOUTS.remove })
+    const remove = run(dsh.bin, ['plugin', '--profile', profile, 'remove', pluginName], { timeout: TIMEOUTS.remove })
     const rmDir = forceCleanup(profileDir)
     put('F-cleanup', { command: `${remove.command} ; rm -rf ${profileDir}`, exit_code: remove.exitCode, verdict: rmDir.ok ? 'pass' : 'fail', evidence: `dir cleanup: ${rmDir.error || 'ok'}` })
     if (!rmDir.ok) {
@@ -245,11 +262,11 @@ export function main(argv) {
     }
   }
 
-  return finish({ lines, errors, warns, uncovered, evidences, outDir, pluginName, tgzPath, dshAvailable: dsh.available })
+  return finish({ lines, errors, warns, uncovered, evidences, outDir, pluginName, tgzPath, dsh })
 }
 
-function finish({ lines, errors, warns, uncovered, evidences, outDir, pluginName, tgzPath, dshAvailable }) {
-  const degraded = dshAvailable === false
+function finish({ lines, errors, warns, uncovered, evidences, outDir, pluginName, tgzPath, dsh }) {
+  const degraded = dsh ? dsh.available === false : false
   const verdict = errors.length > 0 ? '不通过'
     : degraded ? '环境降级：[F] 未执行，未达可发布标准'
       : warns.length > 0 ? '带警告通过' : '通过'
@@ -266,9 +283,16 @@ function finish({ lines, errors, warns, uncovered, evidences, outDir, pluginName
     lines.push('❓ 未覆盖项（禁止静默通过）:')
     for (const u of uncovered) lines.push(`   • ${u}`)
   }
+  if (degraded) lines.push(`💡 ${DSH_HINT}`)
   const reportPath = join(outDir, 'acceptance.json')
   writeFileSync(reportPath, JSON.stringify({
     plugin: pluginName, artifact: tgzPath || null, verdict, exit_code: exitCode,
+    ...(dsh ? {
+      dsh: {
+        available: dsh.available, bin: dsh.bin, version: dsh.version, reason: dsh.reason,
+        candidates: dsh.candidates, tried: dsh.tried,
+      },
+    } : {}),
     errors, warnings: warns, uncovered, checks: evidences,
   }, null, 2))
   lines.push(`📁 验收报告: ${reportPath}`)

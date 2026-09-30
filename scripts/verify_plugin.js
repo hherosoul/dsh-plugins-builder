@@ -24,13 +24,16 @@
 // 2 = usage error; 3 = environment degraded (runtime layers not executed).
 //
 // Usage:
-//     node verify_plugin.js <path/to/plugin-dir> [--skip-smoke] [--round <N>]
+//     node verify_plugin.js <path/to/plugin-dir> [--skip-smoke] [--round <N>] [--dsh <path>]
+//
+// CLI resolution: $DSH_BIN / --dsh win, then PATH, then the desktop app bundle
+// derived from this process, then the usual install locations (_run.js).
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { isMain, runMain } from './_cli.js'
 import { main as validateMain, parseYamlDoc } from './validate_plugin.js'
-import { TIMEOUTS, detectDsh, dshHome, forceCleanup, run, tempProfileName } from './_run.js'
+import { DSH_HINT, TIMEOUTS, describeDshFailure, dshHome, forceCleanup, resolveDsh, run, tempProfileName } from './_run.js'
 
 const L4_PROTOCOL = [
   '工具调用（需已配置模型）：经 PTC `await tools.<name>(args)` 或 Web UI 实测，断言返回符合 output.schema 的规范值',
@@ -84,15 +87,26 @@ function nextRound(evidenceRoot, forced) {
 }
 
 export function main(argv) {
-  const target = argv.find((a) => !a.startsWith('--'))
+  const optionValue = (name) => {
+    const i = argv.indexOf(name)
+    return i >= 0 ? (argv[i + 1] ?? null) : null
+  }
+  // Option values are not the positional target (`--round 3 --dsh /x/y`).
+  const valueIndexes = new Set()
+  for (const name of ['--round', '--dsh']) {
+    const i = argv.indexOf(name)
+    if (i >= 0) valueIndexes.add(i + 1)
+  }
+  const target = argv.find((a, i) => !a.startsWith('--') && !valueIndexes.has(i))
   if (!target) {
-    return usage('用法: node verify_plugin.js <plugin-dir> [--skip-smoke] [--round <N>]\n'
+    return usage('用法: node verify_plugin.js <plugin-dir> [--skip-smoke] [--round <N>] [--dsh <path>]\n'
       + '  --skip-smoke   跳过 L5 启动冒烟（仍执行 add + dump + 清理）\n'
-      + '  --round <N>    指定证据轮次号（默认自动递增）')
+      + '  --round <N>    指定证据轮次号（默认自动递增）\n'
+      + '  --dsh <path>   指定 dsh CLI（默认 $DSH_BIN → PATH → 应用内置 CLI → 常见安装位置）')
   }
   const skipSmoke = argv.includes('--skip-smoke')
-  const roundIdx = argv.indexOf('--round')
-  const forcedRound = roundIdx >= 0 ? argv[roundIdx + 1] : null
+  const forcedRound = optionValue('--round')
+  const dshArg = optionValue('--dsh')
 
   const pluginDir = isAbsolute(target) ? target : resolve(target)
   const pkgPath = join(pluginDir, 'package.json')
@@ -104,7 +118,7 @@ export function main(argv) {
   const pluginVersion = pkg.version || '0.0.0'
 
   // ---- environment tier ----------------------------------------------------
-  const dsh = detectDsh()
+  const dsh = resolveDsh({ explicit: dshArg })
 
   // ---- evidence store ------------------------------------------------------
   const evidenceRoot = join(pluginDir, 'qa', 'evidence')
@@ -122,7 +136,7 @@ export function main(argv) {
 
   const lines = []
   lines.push(`🔍 Runtime verification: ${pluginDir}`)
-  lines.push(`   plugin: ${pluginName}@${pluginVersion} | round ${round} | dsh CLI: ${dsh.available ? '已检测到' : '未检测到'}`)
+  lines.push(`   plugin: ${pluginName}@${pluginVersion} | round ${round} | dsh CLI: ${dsh.available ? `${dsh.bin} (${dsh.version})` : `未检测到（${dsh.reason}）`}`)
 
   let failed = false
 
@@ -189,24 +203,26 @@ export function main(argv) {
 
   if (l1v.verdict !== 'fail') {
     if (!dsh.available) {
+      const why = describeDshFailure(dsh)
       put('L3', {
         command: null, exit_code: null,
         expectation: '覆盖层加载 + dump-config 出现目标行',
-        verdict: 'degraded', reason: '无 dsh CLI（环境三档：仅 L1–L2）',
+        verdict: 'degraded', reason: `无可用 dsh CLI（${dsh.reason}）`,
+        resolution: { candidates: dsh.candidates, tried: dsh.tried }, detail: why,
       })
-      uncovered.push('L3 覆盖层加载（无 dsh CLI，未执行）')
-      lines.push('L3 覆盖层加载      [degraded]  无 dsh CLI，未执行')
+      uncovered.push(`L3 覆盖层加载（未执行，${dsh.reason}）: ${why}`)
+      lines.push(`L3 覆盖层加载      [degraded]  ${dsh.reason}，未执行`)
     } else if (!overlayPath) {
       put('L3', {
         command: null, exit_code: null,
         expectation: 'dev/ 覆盖层加载',
-        verdict: 'skip', reason: 'dev/cordis.yml 缺失（validate PATCH-006 已警告）',
+        verdict: 'skip', reason: 'dev/cordis.yml 缺失（仓库只留示例覆盖层，本地覆盖层不入库属预期）',
       })
-      uncovered.push('L3 覆盖层加载（dev/ 覆盖层缺失，未执行）')
+      uncovered.push('L3 覆盖层加载（dev/cordis.yml 缺失，未执行）')
       lines.push('L3 覆盖层加载      [skip]  dev/ 覆盖层缺失')
     } else {
       const rowIds = overlayRowIds(overlayPath) || []
-      const r = run('dsh', ['--profile', profile, '--patch', overlayPath, '--dump-config'], { timeout: TIMEOUTS.dump })
+      const r = run(dsh.bin, ['--profile', profile, '--patch', overlayPath, '--dump-config'], { timeout: TIMEOUTS.dump })
       const hasIds = rowIds.length > 0 && rowIds.every((id) => r.stdout.includes(id))
       const noFailed = !/FAILED/.test(r.stdout)
       const pass = r.exitCode === 0 && hasIds && noFailed && !r.timedOut
@@ -244,15 +260,17 @@ export function main(argv) {
   // ---- L5 install-grade (needs dsh CLI) --------------------------------------
   if (l1v.verdict !== 'fail') {
     if (!dsh.available) {
+      const why = describeDshFailure(dsh)
       put('L5', {
         command: null, exit_code: null,
         expectation: '净 profile 安装 → dump 层出现 → 启动冒烟 → 清理',
-        verdict: 'degraded', reason: '无 dsh CLI（环境三档：仅 L1–L2）',
+        verdict: 'degraded', reason: `无可用 dsh CLI（${dsh.reason}）`,
+        resolution: { candidates: dsh.candidates, tried: dsh.tried }, detail: why,
       })
-      uncovered.push('L5 安装式验证（无 dsh CLI，未执行）')
-      lines.push('L5 安装式          [degraded]  无 dsh CLI，未执行')
+      uncovered.push(`L5 安装式验证（未执行，${dsh.reason}）: ${why}`)
+      lines.push(`L5 安装式          [degraded]  ${dsh.reason}，未执行`)
     } else {
-      const add = run('dsh', ['plugin', '--profile', profile, 'add', pluginDir], { timeout: TIMEOUTS.install })
+      const add = run(dsh.bin, ['plugin', '--profile', profile, 'add', pluginDir], { timeout: TIMEOUTS.install })
       const addOk = add.exitCode === 0 && !add.timedOut
       put('L5-add', {
         command: add.command, exit_code: add.exitCode, signal: add.signal, timed_out: add.timedOut,
@@ -265,7 +283,7 @@ export function main(argv) {
       if (!addOk) {
         failed = true
       } else {
-        const dump = run('dsh', ['--profile', profile, '--dump-config'], { timeout: TIMEOUTS.dump })
+        const dump = run(dsh.bin, ['--profile', profile, '--dump-config'], { timeout: TIMEOUTS.dump })
         const layerSeen = dump.stdout.includes(`# == ${pluginName}`)
         const noFailed = !/FAILED/.test(dump.stdout)
         const dumpOk = dump.exitCode === 0 && layerSeen && noFailed && !dump.timedOut
@@ -281,7 +299,7 @@ export function main(argv) {
         l5Ok = addOk && dumpOk
 
         if (!skipSmoke) {
-          const smoke = run('dsh', ['--profile', profile], { timeout: TIMEOUTS.smoke })
+          const smoke = run(dsh.bin, ['--profile', profile], { timeout: TIMEOUTS.smoke })
           // Boot smoke is warn-level: we kill the process on purpose, so the
           // verdict is about the captured logs, not the exit code.
           const smokeOk = !/FAILED/.test(smoke.stdout + smoke.stderr)
@@ -300,7 +318,7 @@ export function main(argv) {
         lines.push(`L5 安装式          ${mark(l5Ok ? 'pass' : 'fail')}  (profile ${profile}，冒烟为 warn 级)`)
       }
       // Forced cleanup regardless of add/dump outcome (清理失败 = 报错留痕).
-      const remove = run('dsh', ['plugin', '--profile', profile, 'remove', pluginName], { timeout: TIMEOUTS.remove })
+      const remove = run(dsh.bin, ['plugin', '--profile', profile, 'remove', pluginName], { timeout: TIMEOUTS.remove })
       const rmDir = forceCleanup(profileDir)
       const cleanupOk = rmDir.ok // CLI remove may no-op when add failed; dir cleanup is the hard gate
       put('L5-cleanup', {
@@ -322,13 +340,20 @@ export function main(argv) {
   const verdict = failed ? 'fail' : (degraded ? 'degraded' : 'pass')
   const exitCode = failed ? 1 : (degraded ? 3 : 0)
   if (degraded) {
-    uncovered.push('运行时验证未执行（无 dsh CLI）：交付未达可发布标准，禁止宣称交付完成')
+    uncovered.push(`运行时验证未执行（${dsh.reason}）：交付未达可发布标准，禁止宣称交付完成。${describeDshFailure(dsh)}`)
   }
   put('summary', {
     command: null, exit_code: exitCode,
     expectation: '环境允许的全部自动化层通过',
     verdict,
-    environment: { dsh_cli: dsh.available, probe: excerpt(dsh.probe.stderr || dsh.probe.stdout, 200) },
+    environment: {
+      dsh_cli: dsh.available,
+      dsh_bin: dsh.bin,
+      dsh_version: dsh.version,
+      dsh_reason: dsh.reason,
+      candidates: dsh.candidates,
+      tried: dsh.tried,
+    },
     layers: evidences.filter((e) => e.layer !== 'summary').map((e) => ({ layer: e.layer, verdict: e.verdict })),
     uncovered,
   })
@@ -338,6 +363,7 @@ export function main(argv) {
     for (const u of uncovered) lines.push(`   • ${u}`)
   }
   lines.push(`📁 证据: ${evidenceDir}`)
+  if (degraded) lines.push(`💡 ${DSH_HINT}`)
   lines.push(failed
     ? `❌ 运行时验证不通过（exit 1）`
     : degraded

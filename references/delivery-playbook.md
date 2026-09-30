@@ -64,6 +64,8 @@ node <dsh-plugins-builder 安装目录>/scripts/package_plugin.js <插件目录>
 | dump-config 看不到自己的层 | 层序在后层被按行整体替换 | 检查更高优先级层是否重述了同一行 id；覆盖须重述整行 |
 | 覆盖只改了部分键却整行失效 | patch 替换整个 `config` 值（非深合并） | 重述该行需要的每一个键 |
 | 工具行为变了但代码没变 | 用户层 / home 层 patch 覆盖 | `--dump-config` 逐层比对 |
+| verify/package 报「无 dsh CLI」但机器上明明有 | CLI 探测先看 PATH；桌面版把 CLI 放在应用包内（`<app>/Contents/Resources/runtime/cli/bin/dsh`），PATH 上不一定有 | 看降级证据的候选清单与 `cli-not-found` / `cli-broken` 码；用 `--dsh <path>` 或 `$DSH_BIN` 指定，或用应用自带的「安装命令行工具」（macOS 装到 `/usr/local/bin`） |
+| 降级 exit 3 被当成「环境就这样」 | 「PATH 上没配」与「环境真的不支持」曾共用同一句话 | 只有候选清单全灭才算环境降级；`cli-broken` 必须当待修问题处理 |
 
 ## 交付门禁
 

@@ -39,11 +39,19 @@ node <dsh-plugins-builder 安装目录>/scripts/verify_plugin.js <插件目录> 
 
 ## 诚实降级（环境三档盘点）
 
+CLI 定位（`_run.js`）有序尝试：`--dsh <path>` / `$DSH_BIN` → PATH 上的 `dsh` →
+**由本进程推导的应用内置 CLI**（`<app>/Contents/Resources/runtime/cli/bin/dsh`，
+桌面版是主要分发形态、默认不把它放进 PATH）→ 常见安装位置（`/usr/local/bin`、
+`~/.local/bin`、`~/Library/pnpm`、`/opt/homebrew/bin`）。两种失败必须区分：
+`cli-not-found`（哪里都没有）与 `cli-broken`（找到了但 `--version` 不成功）。
+降级证据要带**候选清单与每个候选的结果**，并给出 `DSH_BIN` / `--dsh` 提示——
+只写「无 dsh CLI」等于把「PATH 上没配」误报成「环境不支持」，会让 L3/L5/[F] 被静默跳过。
+
 | 环境 | 处理 |
 |---|---|
 | 有 dsh CLI + 模型密钥 | L1–L5 全跑（L4 按手工协议执行调用类用例） |
 | 有 dsh CLI 无密钥 | L1–L3 + L5 必跑；L4 只跑无需密钥项（配置校验失败、HMR、取消）；**未跑项显式列入「未覆盖项」** |
-| 无 dsh CLI | 仅 L1–L2（脚本 exit 3）；报告显著标注「运行时验证未执行，交付未达可发布标准」，**禁止宣称交付完成** |
+| 无可用 dsh CLI（`cli-not-found` / `cli-broken`） | 仅 L1–L2（脚本 exit 3）；报告显著标注「运行时验证未执行，交付未达可发布标准」+ 已探测候选清单，**禁止宣称交付完成** |
 
 ## 9 维度场景质检（代码交付版）
 

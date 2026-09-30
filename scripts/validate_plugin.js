@@ -1065,16 +1065,27 @@ function validatePatchFile(pluginDir, patchRel, result) {
 
 function validateDevOverlay(pluginDir, result) {
   // PATCH-005/006：dev 覆盖层（绝对路径直载源码）。
+  // `*.example.yml` / `*.sample.yml` / `*.template.yml` 是模式文档，不是生效的
+  // 覆盖层：它们按设计只带占位路径，所以既不做绝对路径校验，也算「模式已文档化」
+  // （真正的 dev/cordis.yml 常为机器本地、不入库——仓库里只留示例是预期做法）。
+  const isExampleOverlay = (name) => /\.(example|sample|template)\.ya?ml$/i.test(name)
   const devDir = join(pluginDir, 'dev')
   let overlays = []
+  let examples = []
   if (isDirSync(devDir)) {
     const entries = readdirSync(devDir, { withFileTypes: true }).filter((e) => e.isFile())
     const yml = entries.filter((e) => e.name.endsWith('.yml')).map((e) => e.name).sort()
     const yaml = entries.filter((e) => e.name.endsWith('.yaml')).map((e) => e.name).sort()
-    overlays = [...yml, ...yaml].map((nm) => join(devDir, nm))
+    const names = [...yml, ...yaml]
+    examples = names.filter(isExampleOverlay)
+    overlays = names.filter((nm) => !isExampleOverlay(nm)).map((nm) => join(devDir, nm))
   }
   if (overlays.length === 0) {
-    emit(result, 'PATCH-006')
+    if (examples.length > 0) {
+      result.infos.push(`dev/ 仅含示例覆盖层（${examples.join('、')}）：模式已文档化，本地 dev/cordis.yml 不入库属预期，PATCH-006 不触发`)
+    } else {
+      emit(result, 'PATCH-006')
+    }
     return
   }
   for (const ov of overlays) {
