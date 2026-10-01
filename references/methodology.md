@@ -23,12 +23,13 @@ DeepSeek Harness（dsh）插件（bundle）**——可安装、可运行、行�
 | `plugin_validate` | `validate_plugin.js` | 静态合规校验（规则 ID；`--policy` 自定义验收、`--skip-path-check` 就地校验、`--trust-append` 放行第三方 append） | M1 |
 | `plugin_verify` | `verify_plugin.js` | 运行时验证矩阵编排（L1–L3+L5 自动化；L4 手工协议），证据 JSON 落 `<target>/qa/evidence/` | M2 可用 |
 | `plugin_package` | `package_plugin.js` | 校验 → 构建 → 打包 → 打包后验收（[E] 干净度 + [F] 安装式） | M2 可用 |
-| `plugin_qa_report` | `qa_report.js` | 聚合机读用例结果 + 运行时证据 → QA-REPORT.md（判定归 LLM，脚本只聚合） | M3 未就绪 |
+| `plugin_qa_report` | `qa_report.js` | 聚合运行时证据（`qa/evidence/round-*/`）+ 打包验收（`dist/acceptance.json`）→ QA-REPORT.md（层矩阵 / 回归 diff / 九维度待判定表 / 强制未覆盖项；判定归 LLM，脚本只聚合） | M3 可用 |
 | `plugin_ledger` | `ledger.js` | 交付台账：bootstrap / add / latest / align / advise | M2 可用 |
 | `plugin_guide` | （直接读 `references/`） | 按主题返回方法论细则 | M1 |
 
-未就绪脚本（当前仅 `qa_report.js`）输出结构化 `{"status":"unavailable",...}` 并以
-退出码 2 结束——**如实告知用户该能力属于哪个里程碑，禁止用临时手段冒充**。
+里程碑未就绪的脚本输出结构化 `{"status":"unavailable",...}` 并以
+退出码 2 结束——**如实告知用户该能力属于哪个里程碑，禁止用临时手段冒充**
+（当前无未就绪脚本；该约定保留给未来里程碑扩展）。
 
 **调用纪律（路径）**：优先调用插件工具（脚本路径由插件运行时解析，杜绝相对路径与
 硬编码绝对路径）；CLI 回退一律写 `<dsh-plugins-builder 安装目录>` 占位风格：
@@ -75,10 +76,12 @@ README Quickstart。
 ```
 plugin_validate(target=<插件目录>)          # 静态 · 规则 ID（M1 可用）
 plugin_verify(target=<插件目录>)            # 运行时 · 分层实证（M2 可用）
+plugin_qa_report(target=<插件目录>)          # 证据聚合 → QA-REPORT.md（M3 可用）
 ```
 静态合规 + 运行时验证矩阵（L1–L5）+ 9 维度场景质检 + 迭代（失败 → 定位代码 / 配置 /
 文档 → 最小改动 → 复测，≤3 轮）+ 回归。详见 `qa-playbook.md`（含证据 JSON 格式与
-「未覆盖项」规范）。每轮结果落成机读证据；**任何改动后重放全量用例并 diff 上一轮**。
+「未覆盖项」规范）。每轮结果落成机读证据；**任何改动后重放全量用例并 diff 上一轮**
+（`qa_report.js` 自动输出轮次间 verdict 回归 diff；九维度结论列归 LLM 填写）。
 **自定义验收标准**：`--policy <yaml>` 可覆盖 / 豁免方法论阈值（B 类，豁免须带 reason
 且报告可见）；平台契约（A 类）拒绝覆盖。格式：`validate_plugin.js --policy-help`。
 **门禁**：校验 0 error + 运行时矩阵（环境允许的全部层）通过 + 9 维度通过；未过回退
@@ -129,7 +132,8 @@ plugin_ledger(action=add, target=<插件包路径>, note="<改了什么>")
 `output.schema` 声明的规范 JSON 值；内容块只出自 `render`；抛异常或非法返回 = `isError`）、
 瀑布铁律（waterfall 监听器必须调用 `next()`）、纯函数铁律（render 与 presenters 无 I/O /
 时钟 / 随机）、渲染意图铁律（`presentCall` / `presentResult` 返回 card 标签的封闭联合
-——generic / terminal / diff；UI 格式不为 UI 进入规范值；回放绝不崩溃）、模型可见即已记录、
+——调用侧 generic / terminal / diff，结果侧另有 read / search / web 视图；UI 格式不为
+UI 进入规范值；回放绝不崩溃）、模型可见即已记录、
 信号铁律（遵守 `exec.signal`；后台任务发布 id 后改用任务自有取消信号）、副作用铁律
 （手动资源必须进 `ctx.effect()`）、配置铁律（无硬编码可调参数；配置错误要响亮；不导出
 普通对象作 Config）、层序铁律（patch 按行整体替换；bundle 层按包名引用；绝对路径只许

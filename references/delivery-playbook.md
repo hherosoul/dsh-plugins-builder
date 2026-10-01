@@ -16,7 +16,7 @@
 ├── README.md               # Quickstart：安装 → 启动 → 验证，命令可逐条复制执行
 ├── qa/                     # 证据附件（可选随包）
 │   ├── cases.yaml          # 机读用例库（M3）
-│   └── QA-REPORT.md        # 交付质量报告（合规 + 运行时 + 场景 + 未覆盖项声明）
+│   └── QA-REPORT.md        # 交付质量报告：由 qa_report.js 聚合 evidence + acceptance.json 产出（勿手写）
 └── LICENSE
 ```
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugins-builder",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "dsh-plugins-builder: meta-engineer plugin that scaffolds, validates, QA-reports and packages DeepSeek Harness plugins through a 5-phase gated pipeline",
   "type": "module",
   "main": "index.js",

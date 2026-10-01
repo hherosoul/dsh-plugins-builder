@@ -6,14 +6,19 @@
 //     content blocks come exclusively from render (pure functions).
 //   - Throwing or returning an invalid value = isError (fail honestly).
 //   - Honor exec.signal: an already-aborted call rejects before the script
-//     body runs (script bodies are synchronous and run to completion).
+//     body runs. Foreground script bodies are synchronous and run to
+//     completion; the two long-running tools (plugin_verify /
+//     plugin_package) additionally offer a background mode that runs the
+//     script as a jobs-runtime child process (collect via job_output,
+//     cancel via job_kill).
 //   - No hardcoded tunables: the workspace root comes from Config; script
 //     modules are imported statically relative to this module location.
-//   - UI cards follow the official card-tagged render-intent union: the six
+//   - UI cards follow the official card-tagged render-intent union: the
 //     script-backed tools declare terminal call/result views. presentCall /
 //     presentResult / presentationMeta are pure functions of args(+result) —
 //     no I/O, no clock, no randomness — so session-log replay never crashes.
 
+import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +50,10 @@ export const Config = Schema.object({
 // exitCode semantics: 0 pass (or pass-with-warnings); 1 error / acceptance
 // failed; 2 usage error or milestone unavailable; 3 environment degraded —
 // runtime layers not executed (no dsh CLI), delivery NOT publishable.
+// The optional kind/jobId pair is present only when the tool ran in
+// background mode: the canonical handle then is { kind: 'background',
+// jobId } per the official producer contract (cookbook / jobs subsystem) —
+// ok/exitCode/stdout/stderr are foreground-only fields.
 const scriptOutputSchema = {
   type: 'object',
   properties: {
@@ -52,16 +61,36 @@ const scriptOutputSchema = {
     exitCode: { type: 'number', description: 'script exit code' },
     stdout: { type: 'string', description: 'captured standard output' },
     stderr: { type: 'string', description: 'captured standard error' },
+    kind: { type: 'string', description: 'present only in background mode: "background"' },
+    jobId: { type: 'string', description: 'present only in background mode: jobs-runtime id, read via job_output, cancel via job_kill' },
   },
   additionalProperties: false,
 }
 
+// Display-only budget for the model-visible projection of script output and
+// for background job notices. The canonical value keeps full-fidelity
+// stdout/stderr (PTC consumers and session-log replay stay lossless);
+// clipping is a render/presentation decision only. Head keeps the leading
+// summary lines, tail keeps the final verdict lines.
+const RENDER_BUDGET = { stdout: 4000, stderr: 2000, jobNoticeBytes: 65536 }
+
 // render must be a PURE function of the canonical value: no I/O, no clock,
 // no randomness.
+function clipForRender(text, budget) {
+  const t = String(text || '').trim()
+  if (t.length <= budget) return t
+  const head = Math.ceil(budget * 0.6)
+  const tail = budget - head
+  return `${t.slice(0, head)}\n…[render clipped ${t.length - budget} chars; full text in the canonical stdout/stderr field and evidence JSON]…\n${t.slice(-tail)}`
+}
+
 function renderScriptResult(_args, value) {
+  if (value && value.kind === 'background') {
+    return [{ type: 'text', text: `background job ${value.jobId} started; collect output with job_output, cancel with job_kill` }]
+  }
   const lines = [value.ok ? `[pass] exit ${value.exitCode}` : `[fail] exit ${value.exitCode}`]
-  if (value.stdout.trim()) lines.push(value.stdout.trim())
-  if (value.stderr.trim()) lines.push(`[stderr] ${value.stderr.trim()}`)
+  if (value.stdout.trim()) lines.push(clipForRender(value.stdout, RENDER_BUDGET.stdout))
+  if (value.stderr.trim()) lines.push(`[stderr] ${clipForRender(value.stderr, RENDER_BUDGET.stderr)}`)
   return [{ type: 'text', text: lines.join('\n') }]
 }
 
@@ -75,6 +104,7 @@ function terminalCallView(argv) {
 }
 
 function scriptPresentationMeta(_args, value) {
+  if (value && value.kind === 'background') return { background: true, jobId: value.jobId }
   return { exitCode: value.exitCode, ok: value.ok }
 }
 
@@ -132,6 +162,74 @@ function runScript(scriptMain, scriptArgs, signal) {
     stdout: result.stdout,
     stderr: result.stderr,
   }
+}
+
+// Background mode for the two long-running tools (plugin_verify /
+// plugin_package): the script runs as a child process registered with the
+// host jobs runtime (ctx.jobs — optional service, looked up without inject
+// so hosts without it still load this plugin). The model receives the
+// canonical { kind: 'background', jobId } handle, streams output through
+// job_output and cancels with job_kill — eliminating the foreground
+// long-uninterruptible window of the synchronous in-process path.
+// Producer contract (docs/subsystems/jobs.zh.md): run(job) is called once
+// after preflight and synchronously returns { cancel, done }; cancel is
+// idempotent and must settle done; done resolves only after the producer
+// released its resources and never rejects. Registering with no attached
+// job controller fails inside start() before run() — an honest error.
+function startBackgroundScript(ctx, exec, definition) {
+  const jobs = ctx.get('jobs')
+  if (!jobs) {
+    throw new Error('background mode requires the jobs service (ctx.jobs); call again without background for the synchronous in-process path')
+  }
+  if (exec.signal && exec.signal.aborted) throw new Error('aborted')
+  let capturedId = ''
+  let killRequested = false
+  let child = null
+  const spec = {
+    kind: 'plugin-script',
+    label: definition.label,
+    owner: exec.agent,
+    outputLimitBytes: RENDER_BUDGET.jobNoticeBytes,
+    run(job) {
+      capturedId = String(job.id)
+      child = spawn(process.execPath, [definition.scriptPath, ...definition.scriptArgs], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      child.stdout.setEncoding('utf8')
+      child.stderr.setEncoding('utf8')
+      child.stdout.on('data', (text) => job.append(text))
+      child.stderr.on('data', (text) => job.append(text, { channel: 'stderr' }))
+      job.updateProgress('script running')
+      return {
+        cancel() {
+          killRequested = true
+          if (child) child.kill('SIGTERM')
+        },
+        done: new Promise((resolveDone) => {
+          child.on('error', (err) => {
+            resolveDone({ status: 'failed', detail: `spawn error: ${err.message}` })
+          })
+          child.on('close', (code, signal) => {
+            const killed = killRequested || signal === 'SIGTERM'
+            resolveDone({
+              status: killed ? 'killed' : (code === 0 ? 'completed' : 'failed'),
+              detail: killed ? 'cancelled by job_kill' : `exit code: ${code}`,
+            })
+          })
+        }),
+      }
+    },
+  }
+  return Promise.resolve(jobs.start(spec)).then((started) => {
+    // jobs.start may return its handle; the id is also captured inside
+    // run() per the documented JobHandle contract.
+    const handle = started && typeof started === 'object' ? started : null
+    const jobId = capturedId
+      || (handle && (handle.id ?? handle.jobId))
+      || (typeof started === 'string' ? started : '')
+    if (!jobId) throw new Error('jobs runtime did not publish a job id')
+    return { kind: 'background', jobId: String(jobId) }
+  })
 }
 
 export function apply(ctx, config) {
@@ -196,11 +294,12 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'plugin_verify',
-    description: 'Orchestrate the L2-L5 runtime verification matrix for a DeepSeek Harness plugin: static check, build, dev-overlay load, install-grade check in a temp profile, writing per-layer evidence JSON under <target>/qa/evidence/. L4 behavior items are emitted as a manual protocol (verdict "manual"). The dsh CLI is located via the dshBin parameter, config.dshBin, $DSH_BIN, PATH, the desktop app bundle, then the usual install locations; only when none works does the run degrade to L1-L2 (exit 3, not publishable) and report every path it tried.',
+    description: 'Orchestrate the L2-L5 runtime verification matrix for a DeepSeek Harness plugin: static check, build, dev-overlay load, install-grade check in a temp profile, writing per-layer evidence JSON under <target>/qa/evidence/. L4 behavior items are emitted as a manual protocol (verdict "manual"). The dsh CLI is located via the dshBin parameter, config.dshBin, $DSH_BIN, PATH, the desktop app bundle, then the usual install locations; only when none works does the run degrade to L1-L2 (exit 3, not publishable) and report every path it tried. Background mode runs the script as a cancellable jobs-runtime child process and returns { kind: "background", jobId }: collect with job_output, cancel with job_kill — preferred for long install-gated runs.',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to verify at runtime' },
       skipSmoke: { type: 'boolean', description: 'Skip the L5 boot smoke (add + dump + cleanup still run)' },
       dshBin: { type: 'string', description: 'Path to the dsh CLI (defaults to config.dshBin / $DSH_BIN / auto-discovery)' },
+      background: { type: 'boolean', description: 'Run as a background job (requires the jobs service); returns a background handle instead of the script result' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -211,7 +310,9 @@ export function apply(ctx, config) {
       const argv = ['node', 'scripts/verify_plugin.js', args.target]
       if (args.skipSmoke) argv.push('--skip-smoke')
       if (args.dshBin) argv.push('--dsh', args.dshBin)
-      return terminalCallView(argv)
+      const view = terminalCallView(argv)
+      if (args.background) view.title += ' [background job]'
+      return view
     },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
@@ -219,18 +320,26 @@ export function apply(ctx, config) {
       if (args.skipSmoke) scriptArgs.push('--skip-smoke')
       const dshBin = args.dshBin || config.dshBin
       if (dshBin) scriptArgs.push('--dsh', dshBin)
+      if (args.background) {
+        return startBackgroundScript(ctx, exec, {
+          label: `plugin_verify ${args.target}`,
+          scriptPath: join(BASE_DIR, 'scripts', 'verify_plugin.js'),
+          scriptArgs,
+        })
+      }
       return runScript(verifyPlugin, scriptArgs, exec.signal)
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'plugin_package',
-    description: 'Validate, build, pack (tgz) and post-pack-accept a DeepSeek Harness plugin: [E] five-layer tarball cleanliness plus [F] install-based verification in a temp profile, with a three-tier verdict (通过 / 带警告通过 / 不通过). The dsh CLI is located via dshBin / config.dshBin / $DSH_BIN / PATH / the app bundle; only when none works does [F] skip (exit 3): "packable" is not "shippable".',
+    description: 'Validate, build, pack (tgz) and post-pack-accept a DeepSeek Harness plugin: [E] five-layer tarball cleanliness plus [F] install-based verification in a temp profile, with a three-tier verdict (通过 / 带警告通过 / 不通过). The dsh CLI is located via dshBin / config.dshBin / $DSH_BIN / PATH / the app bundle; only when none works does [F] skip (exit 3): "packable" is not "shippable". Background mode runs the script as a cancellable jobs-runtime child process and returns { kind: "background", jobId }: collect with job_output, cancel with job_kill — preferred for long install-gated runs.',
     parameters: {
       target: { type: 'string', required: true, description: 'Plugin directory to package' },
       outputDir: { type: 'string', description: 'Where to place the packaged artifact (defaults to <target>/dist)' },
       skipSmoke: { type: 'boolean', description: 'Skip the [F] boot smoke (add + dump + cleanup still run)' },
       dshBin: { type: 'string', description: 'Path to the dsh CLI (defaults to config.dshBin / $DSH_BIN / auto-discovery)' },
+      background: { type: 'boolean', description: 'Run as a background job (requires the jobs service); returns a background handle instead of the script result' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -242,7 +351,9 @@ export function apply(ctx, config) {
       if (args.outputDir) argv.push('--out', args.outputDir)
       if (args.skipSmoke) argv.push('--skip-smoke')
       if (args.dshBin) argv.push('--dsh', args.dshBin)
-      return terminalCallView(argv)
+      const view = terminalCallView(argv)
+      if (args.background) view.title += ' [background job]'
+      return view
     },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
@@ -251,15 +362,24 @@ export function apply(ctx, config) {
       if (args.skipSmoke) scriptArgs.push('--skip-smoke')
       const dshBin = args.dshBin || config.dshBin
       if (dshBin) scriptArgs.push('--dsh', dshBin)
+      if (args.background) {
+        return startBackgroundScript(ctx, exec, {
+          label: `plugin_package ${args.target}`,
+          scriptPath: join(BASE_DIR, 'scripts', 'package_plugin.js'),
+          scriptArgs,
+        })
+      }
       return runScript(packagePlugin, scriptArgs, exec.signal)
     },
   }))
 
   ctx.tools.register(defineTool({
     name: 'plugin_qa_report',
-    description: 'Aggregate machine-readable case results and runtime evidence into QA-REPORT.md; judgments belong to the model, the script only aggregates. Milestone M3: honestly reports unavailable until then.',
+    description: 'Aggregate runtime evidence (qa/evidence/round-*/) and packaging acceptance (dist/acceptance.json) of a DeepSeek Harness plugin into QA-REPORT.md: the layer verdict matrix, a round-over-round regression diff, the acceptance summary, the 9-dimension judgment table (verdict cells stay 待判定 — judgments belong to the model) and a mandatory uncovered-items section. Pure aggregation, Phase 4 exit. Exit 1 when a fail verdict was aggregated or nothing could be aggregated.',
     parameters: {
-      evidenceDir: { type: 'string', description: 'Directory holding case results and runtime evidence JSON' },
+      target: { type: 'string', required: true, description: 'Plugin directory holding qa/evidence (and optionally dist/acceptance.json)' },
+      out: { type: 'string', description: 'Report output path (defaults to <target>/qa/QA-REPORT.md)' },
+      round: { type: 'number', description: 'Evidence round to aggregate (defaults to the latest round)' },
     },
     output: {
       schema: scriptOutputSchema,
@@ -267,13 +387,16 @@ export function apply(ctx, config) {
       presentationMeta: scriptPresentationMeta,
     },
     presentCall: (args) => {
-      const argv = ['node', 'scripts/qa_report.js']
-      if (args.evidenceDir) argv.push(args.evidenceDir)
+      const argv = ['node', 'scripts/qa_report.js', args.target]
+      if (args.out) argv.push('--out', args.out)
+      if (args.round !== undefined) argv.push('--round', String(args.round))
       return terminalCallView(argv)
     },
     presentResult: scriptPresentResult,
     async execute(args, exec) {
-      const scriptArgs = args.evidenceDir ? [resolveTarget(args.evidenceDir, config)] : []
+      const scriptArgs = [resolveTarget(args.target, config)]
+      if (args.out) scriptArgs.push('--out', resolveTarget(args.out, config))
+      if (args.round !== undefined) scriptArgs.push('--round', String(args.round))
       return runScript(qaReport, scriptArgs, exec.signal)
     },
   }))

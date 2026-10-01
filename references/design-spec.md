@@ -56,7 +56,7 @@
 4. `output.schema` + `output.render`：规范值形状 + 纯函数渲染（两者成对）。
 5. `execute`：只返回规范值；遵守 `exec.signal`；长任务 → `ctx.jobs.start`；失败诚实（抛异常 = isError，禁止谎报成功）。
 
-决策问句：需要 UI 卡片？→ presenters（card 标签渲染意图：generic / terminal / diff；纯函数；结果期卡片事实经 `presentationMeta` 持久化）。需要后台长跑？→ `ctx.jobs.start`（producer 配置控制 `run_in_background`；发布 id 后改用任务自有取消信号）。需要部署策略？→ 钩子（`tools/pre-execute` / `ctx.tools.guard()` / `tools/post-execute`），不进工具。会被 PTC mode 程序化调用？→ `output.schema` 按程序化 API 设计（直接返回句柄与字段；人类解释归 `render`）。
+决策问句：需要 UI 卡片？→ presenters（card 标签渲染意图：调用侧 generic / terminal / diff，结果侧另含 read / search / web；纯函数；结果期卡片事实经 `presentationMeta` 持久化）。需要后台长跑？→ `ctx.jobs.start`（producer 配置控制 `run_in_background`；发布 id 后改用任务自有取消信号）。需要部署策略？→ 钩子（`tools/pre-execute` / `ctx.tools.guard()` / `tools/post-execute`），不进工具。会被 PTC mode 程序化调用？→ `output.schema` 按程序化 API 设计（直接返回句柄与字段；人类解释归 `render`）。
 
 ## patch 行设计
 

@@ -8,7 +8,7 @@
 |---|---|---|---|
 | L1 静态 | 规则 ID 全量 | `validate_plugin.js`（M1 可用） | 无 |
 | L2 构建 | TS 编译 / 打包产物生成 | `tsc` / `tsdown` / `pnpm build` | node + pnpm |
-| L3 加载 | 覆盖层加载成功；`--dump-config` 出现目标层；无 FAILED fiber | `dsh ... --patch` + `--dump-config`，捕获启动日志 | dsh CLI |
+| L3 加载 | 覆盖层加载成功；`--dump-config` 出现目标层；无 FAILED fiber | `dsh --profile <临时> --from-default-profile web --patch <dev 覆盖层> --dump-config`（临时 profile 自 web 模板引导，`--profile` 要求已存在 profile），捕获启动日志 | dsh CLI |
 | L4 行为 | 工具可被调用且返回规范值；非法配置加载失败且报错响亮；HMR 重载无残留注册；取消（signal）生效 | headless 运行 / Web UI 实测；构造边界输入 | dsh CLI（调用类用例需模型密钥） |
 | L5 安装式 | 净 profile `dsh plugin add` → dump-config → 启动冒烟 | 临时 profile（`__verify_<name>` 命名），验证后强制清理 | dsh CLI |
 
@@ -36,6 +36,18 @@ node <dsh-plugins-builder 安装目录>/scripts/verify_plugin.js <插件目录> 
 ```
 
 **判定归属**：命令执行、输出比对、退出码解析 = 脚本（计算 / 变换）；「输出是否符合预期语义」= LLM 判定，脚本只聚合。
+
+## QA-REPORT 聚合（qa_report.js，M3 可用）
+
+```
+node <dsh-plugins-builder 安装目录>/scripts/qa_report.js <插件目录> [--out <file>] [--round <N>]
+```
+
+聚合 `qa/evidence/round-*/`（层矩阵 + 轮次间 verdict 回归 diff）与
+`dist/acceptance.json`（打包验收摘要）成 `<插件目录>/qa/QA-REPORT.md`：九维度表
+**只填机器证据锚点，结论列留 ☐ 待判定**（判定归 LLM）；「未覆盖项」段强制存在
+（证据未覆盖项 + 已知盲区，永不静默）。退出码：0 聚合完成且无 fail；1 聚合到
+fail 或无可聚合证据；2 用法错误。
 
 ## 诚实降级（环境三档盘点）
 

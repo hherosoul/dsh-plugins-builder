@@ -36,12 +36,12 @@ import { isMain, runMain } from './_cli.js'
 // ---------------------------------------------------------------------------
 export const PLATFORM_CONTRACT_VERSION = {
   spec_url: 'https://deepseek-harness.github.io/deepseek-harness/develop/basic/',
-  contract_version: '2026-09-30',
-  last_inspected: '2026-09-30',
+  contract_version: '2026-10-01',
+  last_inspected: '2026-10-01',
   bundle_shape: 'package.json(dsh.bundle.patch) + cordis.patch.yml + index.js; type:module',
   layers: 'bundles 顺序 -> profile patch -> $DSH_HOME patch -> --patch overlay；按行整体替换',
   manifests: 'dsh.bundle 与 dsh.profile 互斥（没有东西同时是两者）；应用参数不是 patch 层',
-  presentation: 'presentCall/presentResult 返回 card 标签渲染意图（generic/terminal/diff），纯函数',
+  presentation: 'presentCall/presentResult 返回 card 标签渲染意图（调用侧 generic/terminal/diff；结果侧 generic/terminal/diff/read/search/web），纯函数',
 }
 
 // ---------------------------------------------------------------------------
@@ -55,8 +55,9 @@ const DOC_BUDGET = {
   resident_error: 10000,
 }
 
-// 占位符扫描（DOC-001）：命中即 error。scripts/ 与 templates/ 白名单豁免——
-// 那里是占位符机制的实现与模板生成器所在，属「示例文件中的合法占位符」。
+// 占位符扫描（DOC-001）：命中即 error。scripts/ 与 templates/ 在正常校验中
+// 豁免——那里是占位符机制的实现与模板生成器所在，属「示例文件中的合法占位符」；
+// 第三方就地校验（--skip-path-check）时豁免收紧为全量扫描（见 scanPlaceholders）。
 // '.py' 保留：被校验的第三方包可能仍是 Python 实现。
 const PLACEHOLDER_PATTERNS = ['[TODO', '[TBD', 'FIXME', 'XXX', '<占位', '待补充']
 const PLACEHOLDER_SCAN_EXTS = new Set(['.md', '.json', '.py', '.txt', '.yaml', '.yml'])
@@ -138,6 +139,7 @@ const UNCOVERED_ITEMS = [
   ['凭据 / 隐私语义级审计', 'Phase 4 维度 9（脚本只做模式级扫描）'],
   ['启发式规则语义复核（TS-003 / TOOL-004 / TOOL-005 / CFG-002）', 'Phase 4（LLM 层）'],
   ['安装式可发布性', 'package_plugin.js [F]（M2 已可用；无 dsh CLI 环境降级为 exit 3，未达可发布标准）'],
+  ['scripts/ 与 templates/ 目录的 SEC/DOC 扫描豁免', '正常校验豁免本插件自身机制目录（占位符模板所在）；第三方就地校验（--skip-path-check）时豁免收紧为全量扫描'],
 ]
 
 const VALID_SEVERITIES = ['error', 'warn', 'info']
@@ -781,13 +783,14 @@ function iterTextFiles(root, exts, exemptParts) {
     .filter((f) => exts.has(extname(f.parts[f.parts.length - 1]).toLowerCase()))
 }
 
-function scanSecurity(root, result) {
-  // SEC-001/002/003。scripts/ 与 templates/ 白名单豁免（占位符机制实现所在）；
+function scanSecurity(root, result, exemptParts) {
+  // SEC-001/002/003。正常校验豁免 scripts/ 与 templates/（占位符机制实现
+  // 所在）；第三方就地校验（--skip-path-check）传入空豁免表，收紧为全量扫描。
   // SEC-002 另豁免 dev/（平台契约要求覆盖层绝对路径）。
   // 源码文件（.js/.ts）走 token 级扫描（注释 / 正则字面量免疫，见 _analyze.js）；
   // 文档与配置文件维持原文扫描。
   const exts = new Set([...PLACEHOLDER_SCAN_EXTS, ...SOURCE_EXTS])
-  for (const f of iterTextFiles(root, exts, ['scripts', 'templates'])) {
+  for (const f of iterTextFiles(root, exts, exemptParts)) {
     let text
     try {
       text = readTextStrict(f.abs)
@@ -805,8 +808,9 @@ function scanSecurityText(text, f, rel, result) {
   for (const [pattern, label] of CREDENTIAL_PATTERNS) {
     if (pattern.test(text)) emit(result, 'SEC-001', { path: rel, pattern: label })
   }
-  // SEC-002 豁免 dev/ 与 qa/（同 scanSecuritySource：证据命令须如实记录绝对路径）。
-  if (!f.parts.includes('dev') && !f.parts.includes('qa')) {
+  // SEC-002 豁免 dev/、qa/ 与 dist/（同 scanSecuritySource：证据命令与验收
+  // 报告须如实记录绝对路径；三者均不入库 / 不进发布包 files 白名单）。
+  if (!f.parts.includes('dev') && !f.parts.includes('qa') && !f.parts.includes('dist')) {
     for (const [pattern] of PERSONAL_PATH_PATTERNS) {
       const m = text.match(pattern)
       if (m) emit(result, 'SEC-002', { path: rel, literal: m[0] })
@@ -850,9 +854,10 @@ function scanSecuritySource(text, f, rel, result) {
       break
     }
   }
-  // SEC-002 豁免 dev/（平台契约要求绝对路径）与 qa/（verify_plugin.js 产出的
-  // 本地证据目录，命令记录必须如实含绝对路径）；凭据类 SEC-001 不豁免。
-  if (!f.parts.includes('dev') && !f.parts.includes('qa')) {
+  // SEC-002 豁免 dev/（平台契约要求绝对路径）、qa/ 与 dist/（verify /
+  // package 产出的本地证据与验收目录，命令记录必须如实含绝对路径；
+  // 三者均不入库 / 不进发布包）；凭据类 SEC-001 不豁免。
+  if (!f.parts.includes('dev') && !f.parts.includes('qa') && !f.parts.includes('dist')) {
     for (const [pattern] of PERSONAL_PATH_PATTERNS) {
       for (const value of values) {
         const m = value.match(pattern)
@@ -872,10 +877,11 @@ function scanSecuritySource(text, f, rel, result) {
   }
 }
 
-function scanPlaceholders(root, result) {
-  // DOC-001：占位符扫描。白名单豁免 scripts/ 与 templates/。
+function scanPlaceholders(root, result, exemptParts) {
+  // DOC-001：占位符扫描。正常校验豁免 scripts/ 与 templates/；第三方就地
+  // 校验（--skip-path-check）传入空豁免表，收紧为全量扫描。
   const exts = new Set([...PLACEHOLDER_SCAN_EXTS, ...SOURCE_EXTS])
-  for (const f of iterTextFiles(root, exts, ['scripts', 'templates'])) {
+  for (const f of iterTextFiles(root, exts, exemptParts)) {
     let text
     try {
       text = readTextStrict(f.abs)
@@ -1520,10 +1526,10 @@ function validateDocsDsh(pluginDir, result) {
 
 function validateDocBudget(pluginDir, result) {
   // DOC-004/005：md 文档总量预算。templates/ 是渲染产物（init 的输出源），
-  // 非读物，不计入预算。
+  // qa/ 与 dist/ 是本机生成物（QA-REPORT / acceptance），均非读物，不计入预算。
   let mdFiles
   try {
-    mdFiles = listFilesSorted(pluginDir, new Set([...SKIP_DIRS, 'templates']))
+    mdFiles = listFilesSorted(pluginDir, new Set([...SKIP_DIRS, 'templates', 'qa', 'dist']))
       .filter((f) => f.parts[f.parts.length - 1].endsWith('.md'))
   } catch {
     return
@@ -1654,8 +1660,15 @@ export function validateTarget(targetPath, opts = {}) {
   validateDeps(targetDir, pkg, result)
   validateDocsDsh(targetDir, result)
   validateDocBudget(targetDir, result)
-  scanPlaceholders(targetDir, result)
-  scanSecurity(targetDir, result)
+  // scripts/ 与 templates/ 豁免属本插件自身机制（占位符模板实现所在）；
+  // 第三方就地校验（--skip-path-check）收紧为空豁免表：被校验包自己的
+  // scripts/ 与 templates/ 全量进入 SEC/DOC 扫描视野。
+  const scanExempt = skipPathCheck ? [] : ['scripts', 'templates']
+  if (skipPathCheck) {
+    result.infos.push('[SCOPE] 第三方就地校验：scripts/templates 豁免已收紧，SEC/DOC 规则全量扫描')
+  }
+  scanPlaceholders(targetDir, result, scanExempt)
+  scanSecurity(targetDir, result, scanExempt)
   // append 脚本来自被校验包，属代码执行面：就地校验（--skip-path-check，
   // 典型为第三方包）时默认禁用，须显式 --trust-append。
   runPolicyAppends(targetDir, result, trustAppend || !skipPathCheck)

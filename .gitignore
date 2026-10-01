@@ -5,8 +5,11 @@ node_modules/
 
 # Machine-local files (never publish): dev overlay carries the local absolute
 # entry path (see dev/cordis.example.yml); dist/ + *.tgz are package artifacts;
-# qa/evidence/ holds local verification rounds with absolute-path commands.
+# qa/evidence/ holds local verification rounds and qa/QA-REPORT.md is the
+# local aggregation of them (absolute paths + timestamps) — regenerate per
+# target with scripts/qa_report.js instead of committing.
 dev/cordis.yml
 dist/
 *.tgz
 qa/evidence/
+qa/QA-REPORT.md

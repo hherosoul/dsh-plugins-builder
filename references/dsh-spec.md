@@ -2,8 +2,8 @@
 
 > **契约版本戳**（契约漂移防线；巡检后更新此处，规则与模板同步）
 > - 官方文档根：`https://deepseek-harness.github.io/deepseek-harness/`
-> - contract_version：**2026-09-30**（契约快照 = 官方文档巡检日期）
-> - last_inspected：**2026-09-30**
+> - contract_version：**2026-10-01**（契约快照 = 官方文档巡检日期）
+> - last_inspected：**2026-10-01**
 > - 巡检页面清单：见文末附录（11 页）
 > - 漂移处置：同步改三处且只改三处——本文档（契约）+ `validate_plugin.js`（规则）+ 受影响模板
 
@@ -86,7 +86,7 @@ ctx.tools.register(defineTool({
 - **规范值铁律**：`execute` 只返回 `output.schema` 声明的**规范 JSON 值**；内容块只出自 `render`；抛异常或非法返回 = `isError`。注册表把返回值快照为无损 JSON、校验并冻结后才传给 `render(args, value)`。成功的领域结果即使表示不理想状态（如进程非零退出）也写入规范值，由渲染器解释。
 - **执行身份**：`arguments` 在策略开始前物化为冻结的无损 JSON；`callId` / `name` / `arguments` / `agent` / `exec.token` / `exec.signal` 全程不可变；`args` 是只读输入。异步通知用 `exec.agent.inject(...)`（须 try/catch 防已 dispose 的 agent）。
 - **纯函数铁律**：`render` 与 UI 卡片 `presentCall` / `presentResult` / `presentationMeta` 是 args(+result) 的**纯函数**——无 I/O、无时钟、无随机（回放场景不得崩溃）。
-- **渲染意图**：`presentCall(args)` / `presentResult(args, { content, isError, meta? })` 返回 **card 标签的可辨识联合**——调用侧 `generic`（title/kind/rawInput/content/locations）/ `terminal`（title/description?/cwd?）/ `diff`（diffs: [{path, oldText, newText}]）；结果侧 `generic` / `terminal`（output?/exitCode?/signal?）。联合是封闭的；无展示方法回退通用卡片；畸形输入软校验回退（回放绝不崩溃）。UI 格式（```console 围栏、diff、相对化路径）不为 UI 进入规范值或 Native 内容；终端回退格式归 bridge。
+- **渲染意图**：`presentCall(args)` / `presentResult(args, { content, isError, meta? })` 返回 **card 标签的可辨识联合**——调用侧 `generic`（title/kind/rawInput/content/locations）/ `terminal`（title/description?/cwd?）/ `diff`（diffs: [{path, oldText, newText}]）；结果侧 `generic` / `terminal`（output?/exitCode?/signal?）/ `diff` / `read` / `search` / `web`（文件读取、代码检索与网页抓取类工具的结果视图，事实经 `result.meta` 派生）。联合是封闭的；无展示方法回退通用卡片；畸形输入软校验回退（回放绝不崩溃）。UI 格式（```console 围栏、diff、相对化路径）不为 UI 进入规范值或 Native 内容；终端回退格式归 bridge。
 - **presentationMeta**：`output.presentationMeta(args, value)` 从规范值派生可回放 JSON，核心持久化在 `tool/result` 并传给 `presentResult`——结果期卡片事实（如已应用 hunk、退出码）靠它在回放重现，无需持久化规范值。
 - **信号铁律**：遵守 `exec.signal`；长任务在关键点检查 `aborted`；后台任务由 producer 配置控制 `run_in_background`，用 `ctx.jobs.start({ kind, label, owner: exec.agent, run })` 注册，成功分支返回规范句柄（如 `{ kind: 'background', jobId }`）；发布任务 id 后改用**任务自有取消信号**（外层信号只停止等待）。
 - **参数形状**：显式对象节点必须声明 `additionalProperties: true|false`；隐式参数根对象保持开放。注册借用只读定义——注册后不得修改 schema 或替换回调。

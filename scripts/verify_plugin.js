@@ -222,7 +222,14 @@ export function main(argv) {
       lines.push('L3 覆盖层加载      [skip]  dev/ 覆盖层缺失')
     } else {
       const rowIds = overlayRowIds(overlayPath) || []
-      const r = run(dsh.bin, ['--profile', profile, '--patch', overlayPath, '--dump-config'], { timeout: TIMEOUTS.dump })
+      // --profile requires an existing profile (honest dsh error) and the
+      // overlay needs a base to compose on: bootstrap the throwaway profile
+      // from the shipped web template — the same base the documented
+      // dev-overlay command (`dsh web --patch ./dev/cordis.yml`) boots on.
+      // Pre-clean keeps reruns idempotent (--from-default-profile refuses
+      // an existing profile); the post-dump cleanup below still gates leaks.
+      forceCleanup(profileDir)
+      const r = run(dsh.bin, ['--profile', profile, '--from-default-profile', 'web', '--patch', overlayPath, '--dump-config'], { timeout: TIMEOUTS.dump })
       const hasIds = rowIds.length > 0 && rowIds.every((id) => r.stdout.includes(id))
       const noFailed = !/FAILED/.test(r.stdout)
       const pass = r.exitCode === 0 && hasIds && noFailed && !r.timedOut
